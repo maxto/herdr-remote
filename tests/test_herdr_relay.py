@@ -621,6 +621,10 @@ class RelayEventPushTests(unittest.IsolatedAsyncioTestCase):
         }
         fallback_agent = {
             "pane_id": "event-pane",
+            # Panes only known from a push event carry no session, so the bare
+            # herdr id is the namespaced id and the session label stays empty.
+            "herdr_pane_id": "event-pane",
+            "session_name": "",
             "agent": "omp",
             "status": "blocked",
             "cwd": "/projects/current",
@@ -795,6 +799,345 @@ class RelaySubprocessConcurrencyTests(unittest.TestCase):
                     self.assertEqual(blocked.result(timeout=2), "ok")
                     self.assertEqual(other.result(timeout=2), "ok")
                     self.assertEqual(local.result(timeout=2), "ok")
+
+
+def _pane_list(*panes):
+    return json.dumps({"result": {"type": "pane_list", "panes": list(panes)}})
+
+
+def _pane(pane_id, agent="claude", workspace="w1", tab="w1:t1", cwd="/projects/thing"):
+    return {
+        "pane_id": pane_id,
+        "agent": agent,
+        "agent_status": "idle",
+        "cwd": cwd,
+        "workspace_id": workspace,
+        "tab_id": tab,
+    }
+
+
+class _HerdrStub:
+    """Stands in for run_herdr, answering per named session and recording calls."""
+
+    def __init__(self, sessions, panes_by_session, unreadable=()):
+        self.sessions = sessions
+        self.panes_by_session = panes_by_session
+        self.unreadable = set(unreadable)
+        self.calls = []
+
+    def __call__(self, *args, remote=None, session=None):
+        self.calls.append({"args": args, "remote": remote, "session": session})
+        if args[:2] == ("session", "list"):
+            return json.dumps({"sessions": self.sessions})
+        if args[:2] == ("pane", "list"):
+            if session in self.unreadable:
+                return ""  # session died between discovery and this poll
+            return _pane_list(*self.panes_by_session.get(session, []))
+        return ""
+
+    def sessions_polled(self):
+        return [c["session"] for c in self.calls if c["args"][:2] == ("pane", "list")]
+
+    def calls_for(self, *prefix):
+        return [c for c in self.calls if c["args"][: len(prefix)] == prefix]
+
+
+# The scenario from the acceptance criterion: two sessions, colliding pane ids.
+THREE_SESSIONS = [
+    {"name": "default", "running": True, "default": True},
+    {"name": "crm", "running": True, "default": False},
+    {"name": "mxdb", "running": True, "default": False},
+    {"name": "archived", "running": False, "default": False},
+]
+PANES_BY_SESSION = {
+    "default": [],
+    "crm": [_pane("w1:p1", agent="claude", cwd="/projects/crm")],
+    "mxdb": [
+        _pane("w1:p1", agent="claude", cwd="/projects/mxdb"),
+        _pane("w1:p4", agent="codex", cwd="/projects/mxdb"),
+    ],
+}
+
+
+class RelaySessionDiscoveryTests(unittest.TestCase):
+    def test_session_flag_precedes_the_subcommand(self):
+        with loaded_relay(herdr_bin="/opt/herdr") as relay:
+            completed = subprocess.CompletedProcess([], 0, stdout="", stderr="")
+            with mock.patch.object(relay.subprocess, "run", return_value=completed) as run:
+                relay.run_herdr("pane", "list", session="crm")
+
+            self.assertEqual(
+                run.call_args.args[0], ["/opt/herdr", "--session", "crm", "pane", "list"]
+            )
+
+    def test_running_sessions_are_discovered_and_stopped_ones_skipped(self):
+        with loaded_relay() as relay:
+            stub = _HerdrStub(THREE_SESSIONS, PANES_BY_SESSION)
+            with mock.patch.object(relay, "run_herdr", stub):
+                self.assertEqual(
+                    relay.list_local_sessions(), ["default", "crm", "mxdb"]
+                )
+                relay.get_all_agents()
+
+            self.assertEqual(stub.sessions_polled(), ["default", "crm", "mxdb"])
+            self.assertNotIn("archived", stub.sessions_polled())
+
+    def test_colliding_pane_ids_stay_distinct_across_sessions(self):
+        with loaded_relay() as relay:
+            stub = _HerdrStub(THREE_SESSIONS, PANES_BY_SESSION)
+            with mock.patch.object(relay, "run_herdr", stub):
+                agents = relay.get_all_agents()
+
+            self.assertEqual(
+                [(a["session_name"], a["herdr_pane_id"], a["agent"]) for a in agents],
+                [
+                    ("crm", "w1:p1", "claude"),
+                    ("mxdb", "w1:p1", "claude"),
+                    ("mxdb", "w1:p4", "codex"),
+                ],
+            )
+            # The client-facing ids are unique even though herdr's are not.
+            self.assertEqual(
+                [a["pane_id"] for a in agents],
+                ["crm:w1:p1", "mxdb:w1:p1", "mxdb:w1:p4"],
+            )
+            # Same-named workspaces in different sessions must not merge either.
+            self.assertEqual(
+                sorted({a["workspace_id"] for a in agents}), ["crm:w1", "mxdb:w1"]
+            )
+            self.assertEqual(
+                sorted({a["tab_id"] for a in agents}), ["crm:w1:t1", "mxdb:w1:t1"]
+            )
+
+    def test_a_session_that_dies_mid_poll_is_skipped_with_a_warning(self):
+        with loaded_relay() as relay:
+            stub = _HerdrStub(THREE_SESSIONS, PANES_BY_SESSION, unreadable={"crm"})
+            with mock.patch.object(relay, "run_herdr", stub), \
+                 mock.patch.object(relay.log, "warning") as warning:
+                agents = relay.get_all_agents()
+
+            # crm is dropped; the other sessions still publish.
+            self.assertEqual(
+                [a["pane_id"] for a in agents], ["mxdb:w1:p1", "mxdb:w1:p4"]
+            )
+            warned = " ".join(str(call) for call in warning.call_args_list)
+            self.assertIn("crm", warned)
+
+    def test_repeated_failures_warn_once_until_the_condition_changes(self):
+        with loaded_relay() as relay:
+            stub = _HerdrStub(THREE_SESSIONS, PANES_BY_SESSION, unreadable={"crm"})
+            with mock.patch.object(relay, "run_herdr", stub), \
+                 mock.patch.object(relay.log, "warning") as warning:
+                relay.get_all_agents()
+                relay.get_all_agents()
+                relay.get_all_agents()
+
+            self.assertEqual(warning.call_count, 1)
+
+    def test_remote_hosts_are_never_given_a_session_flag(self):
+        with loaded_relay() as relay:
+            stub = _HerdrStub(THREE_SESSIONS, PANES_BY_SESSION)
+            with mock.patch.object(relay, "run_herdr", stub), \
+                 mock.patch.object(relay, "REMOTES", ["build-host"]):
+                agents = relay.get_all_agents()
+
+            remote_calls = [c for c in stub.calls if c["remote"]]
+            self.assertTrue(remote_calls)
+            self.assertTrue(all(c["session"] is None for c in remote_calls))
+            # Remote pane ids stay bare, exactly as before.
+            self.assertTrue(
+                all(a["session_name"] == "" for a in agents if a["remote"])
+            )
+
+
+class RelaySingleSessionCompatibilityTests(unittest.TestCase):
+    def test_a_lone_default_session_still_works(self):
+        with loaded_relay() as relay:
+            stub = _HerdrStub(
+                [{"name": "default", "running": True, "default": True}],
+                {"default": [_pane("w1:p1", cwd="/projects/solo")]},
+            )
+            with mock.patch.object(relay, "run_herdr", stub):
+                agents = relay.get_all_agents()
+
+            self.assertEqual(len(agents), 1)
+            self.assertEqual(agents[0]["pane_id"], "default:w1:p1")
+            self.assertEqual(agents[0]["herdr_pane_id"], "w1:p1")
+            self.assertEqual(agents[0]["session_name"], "default")
+            self.assertEqual(agents[0]["project"], "solo")
+
+    def test_herdr_without_named_sessions_falls_back_to_bare_ids(self):
+        with loaded_relay() as relay:
+            def no_session_support(*args, remote=None, session=None):
+                if args[:2] == ("session", "list"):
+                    return "unknown option: --json"
+                return _pane_list(_pane("w1:p1", cwd="/projects/legacy"))
+
+            with mock.patch.object(relay, "run_herdr", side_effect=no_session_support) as run:
+                agents = relay.get_all_agents()
+
+            self.assertEqual(agents[0]["pane_id"], "w1:p1")
+            self.assertEqual(agents[0]["session_name"], "")
+            # No --session is threaded through on the legacy path.
+            pane_list_call = next(
+                call for call in run.call_args_list
+                if call.args[:2] == ("pane", "list")
+            )
+            self.assertNotIn("session", pane_list_call.kwargs)
+
+    def test_a_bare_pane_id_still_resolves_when_it_is_unambiguous(self):
+        with loaded_relay() as relay:
+            relay.update_pane_maps([
+                {
+                    "pane_id": "crm:w1:p1", "herdr_pane_id": "w1:p1",
+                    "session_name": "crm", "remote": None,
+                },
+            ])
+
+            target = relay.resolve_pane("w1:p1")
+
+            self.assertIsNotNone(target)
+            self.assertEqual(target.pane_id, "crm:w1:p1")
+            self.assertEqual(target.herdr_pane_id, "w1:p1")
+            self.assertEqual(target.kwargs, {"remote": None, "session": "crm"})
+
+    def test_a_bare_pane_id_two_sessions_claim_resolves_to_nothing(self):
+        with loaded_relay() as relay:
+            relay.update_pane_maps([
+                {
+                    "pane_id": "crm:w1:p1", "herdr_pane_id": "w1:p1",
+                    "session_name": "crm", "remote": None,
+                },
+                {
+                    "pane_id": "mxdb:w1:p1", "herdr_pane_id": "w1:p1",
+                    "session_name": "mxdb", "remote": None,
+                },
+            ])
+
+            # Better to refuse than to write into the wrong project.
+            self.assertIsNone(relay.resolve_pane("w1:p1"))
+            self.assertIsNotNone(relay.resolve_pane("mxdb:w1:p1"))
+
+
+class RelaySessionRoutingTests(unittest.TestCase):
+    def _register_sessions(self, relay):
+        stub = _HerdrStub(THREE_SESSIONS, PANES_BY_SESSION)
+        with mock.patch.object(relay, "run_herdr", stub):
+            relay.update_pane_maps(relay.get_all_agents())
+        return stub
+
+    def _dispatch(self, relay, message, run_result=None):
+        stub = _HerdrStub(THREE_SESSIONS, PANES_BY_SESSION)
+        ws = _FakeWebSocket([json.dumps(message)])
+        completed = run_result or subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        with mock.patch.object(relay, "send_current_snapshot", new=mock.AsyncMock()), \
+             mock.patch.object(relay, "run_herdr", stub), \
+             mock.patch.object(relay, "run_herdr_result", return_value=completed) as result_run:
+            asyncio.run(relay.handle_client(ws))
+        return stub, result_run, ws
+
+    def test_pane_read_is_addressed_to_the_owning_session(self):
+        with loaded_relay() as relay:
+            self._register_sessions(relay)
+
+            stub, _, ws = self._dispatch(relay, {
+                "type": "read_pane", "pane_id": "mxdb:w1:p4", "lines": 40,
+            })
+
+            read = stub.calls_for("pane", "read")[-1]
+            self.assertEqual(read["session"], "mxdb")
+            self.assertEqual(read["remote"], None)
+            # herdr receives the bare id, never the namespaced one.
+            self.assertEqual(read["args"][2], "w1:p4")
+            self.assertEqual(json.loads(ws.sent[-1])["pane_id"], "mxdb:w1:p4")
+
+    def test_two_sessions_sharing_a_pane_id_are_read_separately(self):
+        with loaded_relay() as relay:
+            self._register_sessions(relay)
+
+            crm_stub, _, _ = self._dispatch(relay, {
+                "type": "read_pane", "pane_id": "crm:w1:p1",
+            })
+            mxdb_stub, _, _ = self._dispatch(relay, {
+                "type": "read_pane", "pane_id": "mxdb:w1:p1",
+            })
+
+            self.assertEqual(crm_stub.calls_for("pane", "read")[-1]["session"], "crm")
+            self.assertEqual(mxdb_stub.calls_for("pane", "read")[-1]["session"], "mxdb")
+            self.assertEqual(crm_stub.calls_for("pane", "read")[-1]["args"][2], "w1:p1")
+            self.assertEqual(mxdb_stub.calls_for("pane", "read")[-1]["args"][2], "w1:p1")
+
+    def test_send_text_is_addressed_to_the_owning_session(self):
+        with loaded_relay() as relay:
+            self._register_sessions(relay)
+
+            stub, _, _ = self._dispatch(relay, {
+                "type": "send_text", "pane_id": "crm:w1:p1", "text": "hello",
+            })
+
+            sent = stub.calls_for("pane", "send-text")[-1]
+            self.assertEqual(sent["session"], "crm")
+            self.assertEqual(sent["args"], ("pane", "send-text", "w1:p1", "hello"))
+
+    def test_send_keys_is_addressed_to_the_owning_session(self):
+        with loaded_relay() as relay:
+            self._register_sessions(relay)
+
+            _, result_run, _ = self._dispatch(relay, {
+                "type": "send_keys", "pane_id": "mxdb:w1:p4", "keys": ["Enter"],
+            })
+
+            result_run.assert_called_once_with(
+                "pane", "send-keys", "w1:p4", "Enter", remote=None, session="mxdb"
+            )
+
+    def test_agent_prompt_is_addressed_to_the_owning_session(self):
+        with loaded_relay() as relay:
+            self._register_sessions(relay)
+
+            stub, _, _ = self._dispatch(relay, {
+                "type": "agent_prompt", "pane_id": "mxdb:w1:p1", "text": "go",
+            })
+
+            prompt = stub.calls_for("agent", "prompt")[-1]
+            self.assertEqual(prompt["session"], "mxdb")
+            self.assertEqual(prompt["args"], ("agent", "prompt", "w1:p1", "go"))
+
+    def test_history_is_addressed_to_the_owning_session(self):
+        with loaded_relay() as relay:
+            self._register_sessions(relay)
+
+            stub, _, _ = self._dispatch(relay, {
+                "type": "get_history", "pane_id": "crm:w1:p1",
+            })
+
+            history = stub.calls_for("agent", "history")[-1]
+            self.assertEqual(history["session"], "crm")
+            self.assertEqual(history["args"][2], "w1:p1")
+
+    def test_create_tab_is_addressed_to_the_owning_session(self):
+        with loaded_relay() as relay:
+            self._register_sessions(relay)
+
+            stub, _, _ = self._dispatch(relay, {
+                "type": "create_tab", "workspace_id": "mxdb:w1",
+            })
+
+            created = stub.calls_for("tab", "create")[-1]
+            self.assertEqual(created["session"], "mxdb")
+            self.assertEqual(
+                created["args"], ("tab", "create", "--workspace", "w1", "--focus")
+            )
+
+    def test_a_pane_from_a_vanished_session_is_rejected(self):
+        with loaded_relay() as relay:
+            self._register_sessions(relay)
+
+            _, _, ws = self._dispatch(relay, {
+                "type": "send_text", "pane_id": "gone:w1:p1", "text": "hello",
+            })
+
+            self.assertEqual(json.loads(ws.sent[-1])["message"], "unknown pane_id")
 
 
 if __name__ == "__main__":

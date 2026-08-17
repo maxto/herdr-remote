@@ -21,6 +21,22 @@ class ClientPayloadTests(unittest.TestCase):
         self.assertIn("type:'question_submit'", source)
         self.assertIn("prompt_id:a.prompt_id", source)
 
+    def test_web_shows_the_owning_session_and_never_rebuilds_pane_ids(self):
+        source = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+
+        # The session comes from the relay as an explicit field, never inferred
+        # from cwd, terminal title, or the shape of the pane id.
+        self.assertIn("session_name", source)
+        self.assertIn("session-badge", source)
+        self.assertIn("sessionBadge(a)", source)
+        # Grouping is keyed on the namespaced workspace id, so same-named
+        # workspaces from different sessions cannot merge.
+        self.assertIn("activeSession", source)
+        self.assertIn("a.session_name === activeSession", source)
+        # Actions send back the relay's identifier verbatim.
+        self.assertIn("openTerminal(this.dataset.paneId)", source)
+        self.assertNotIn("`${a.session_name}:${a.herdr_pane_id}`", source)
+
     def test_swift_models_decode_omp_question_state(self):
         for relative_path in (
             "herdi-ios/Sources/Models/Agent.swift",

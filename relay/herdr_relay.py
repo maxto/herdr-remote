@@ -4,7 +4,7 @@
 # dependencies = ["websockets>=14.0", "zeroconf>=0.80.0", "pywebpush>=2.0.0", "py-vapid>=1.9.0"]
 # ///
 """herdr-remote relay — polls herdr, accepts push events (HTTP POST + WebSocket + UDP), broadcasts to clients."""
-import asyncio, hashlib, json, logging, os, re, shutil, signal, socket, subprocess, threading, time
+import asyncio, hashlib, json, logging, os, re, shutil, signal, socket, subprocess, threading, time, typing
 
 try:
     from websockets.asyncio.server import serve
@@ -101,10 +101,18 @@ last_statuses = {}
 last_blocked_prompts = {}
 event_queue = asyncio.Queue()
 pane_remote_map = {}
+# Client-facing pane ids are namespaced per local herdr session ("crm:w1:p1"),
+# because pane/tab/workspace ids are only unique *within* a session. These maps
+# take a namespaced id back to the session that owns it and to the bare id the
+# herdr CLI expects.
+pane_session_map = {}
+pane_herdr_ids = {}
+workspace_targets = {}
 known_panes = set()
 agent_cache = {}
 _remote_locks = {}
 _remote_locks_guard = threading.Lock()
+_warned_state = {}
 
 
 SAFE_RESPONSES = {
@@ -197,7 +205,12 @@ async def send_web_push(title: str, body: str, url: str = "/", clear: bool = Fal
 _load_push_subs()
 
 
-def _invoke_herdr(*args, remote=None):
+def _invoke_herdr(*args, remote=None, session=None):
+    """Run the herdr CLI, optionally against a named local session.
+
+    `session` is only ever applied to local invocations: remote hosts are polled
+    exactly as before, over their own herdr install.
+    """
     if remote:
         cmd = ["ssh", "-o", "ConnectTimeout=5", "-o", "BatchMode=yes", remote, REMOTE_HERDR, *args]
         with _remote_locks_guard:
@@ -208,80 +221,249 @@ def _invoke_herdr(*args, remote=None):
         with remote_lock:
             return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
 
-    cmd = [HERDR, *args]
+    session_args = ["--session", session] if session else []
+    cmd = [HERDR, *session_args, *args]
     return subprocess.run(cmd, capture_output=True, text=True, encoding="utf-8", errors="replace", timeout=15)
 
 
-def run_herdr_result(*args, remote=None):
-    return _invoke_herdr(*args, remote=remote)
+def run_herdr_result(*args, remote=None, session=None):
+    return _invoke_herdr(*args, remote=remote, session=session)
 
 
-def run_herdr(*args, remote=None):
+def run_herdr(*args, remote=None, session=None):
     try:
-        return _invoke_herdr(*args, remote=remote).stdout.strip()
+        return _invoke_herdr(*args, remote=remote, session=session).stdout.strip()
     except Exception:
         return ""
 
 
-def _mutate_herdr(*args, remote=None):
+def _mutate_herdr(*args, remote=None, session=None):
     try:
-        return run_herdr_result(*args, remote=remote).returncode == 0
+        return run_herdr_result(*args, remote=remote, session=session).returncode == 0
     except Exception:
         return False
 
 
-def get_agents_from_host(remote=None):
-    raw = run_herdr("pane", "list", remote=remote)
+def herdr_target(remote=None, session=None):
+    """Invocation kwargs addressing the host/session that owns a pane.
+
+    `session` is omitted when unset so remote calls, and herdr builds predating
+    named sessions, keep their historical argv.
+    """
+    return {"remote": remote} if session is None else {"remote": remote, "session": session}
+
+
+def agent_target(agent):
+    """Invocation kwargs for the host/session an agent record came from."""
+    return herdr_target(agent.get("remote"), agent.get("session_name") or None)
+
+
+def _warn_change(key, message, *args):
+    """Log a warning only when this condition differs from the last poll.
+
+    The poll loop runs every couple of seconds; a persistently broken session
+    would otherwise flood the log with the same line.
+    """
+    rendered = message % args if args else message
+    if _warned_state.get(key) == rendered:
+        return
+    _warned_state[key] = rendered
+    log.warning(rendered)
+
+
+def _clear_warning(key):
+    _warned_state.pop(key, None)
+
+
+class HerdrQueryError(RuntimeError):
+    """A herdr query returned something unusable — usually a dead session."""
+
+
+def namespaced_id(session, value):
+    """Scope a herdr id to its local session: ("crm", "w1:p1") -> "crm:w1:p1".
+
+    Ids stay bare when there is no session to scope them to, which covers SSH
+    remotes and herdr builds without named-session support.
+    """
+    if not session or not value:
+        return value
+    return f"{session}:{value}"
+
+
+def list_local_sessions():
+    """Names of the running local herdr sessions.
+
+    Returns `[None]` — meaning "one poll, no --session flag" — when the session
+    query itself fails, so a herdr build predating named sessions keeps working
+    exactly as before. An empty list means herdr answered and nothing is running.
+    """
+    raw = run_herdr("session", "list", "--json")
+    try:
+        sessions = json.loads(raw)["sessions"]
+        if not isinstance(sessions, list):
+            raise TypeError("sessions is not a list")
+    except (json.JSONDecodeError, KeyError, TypeError, IndexError):
+        _warn_change(
+            "session-discovery",
+            "herdr session list unavailable; falling back to the default session only",
+        )
+        return [None]
+    _clear_warning("session-discovery")
+    return [
+        entry["name"]
+        for entry in sessions
+        if isinstance(entry, dict) and entry.get("running") and entry.get("name")
+    ]
+
+
+def get_agents_from_host(remote=None, session=None):
+    """Agents on one host/session, with ids namespaced to that session.
+
+    Raises HerdrQueryError when herdr answers with something unparseable, so the
+    caller can skip this one source and still publish the others.
+    """
+    raw = run_herdr("pane", "list", **herdr_target(remote, session))
     host_label = remote or "local"
     try:
         data = json.loads(raw)
-        panes = data.get("result", {}).get("panes", [])
-        return [
-            {
-                "pane_id": p["pane_id"],
-                "agent": p.get("agent", ""),
-                "label": p.get("label", ""),
-                "status": p.get("agent_status", "unknown"),
-                "cwd": p.get("cwd", ""),
-                "project": os.path.basename(p.get("cwd", "")),
-                "host": host_label,
-                "remote": remote,
-                "workspace_id": p.get("workspace_id", ""),
-                "tab_id": p.get("tab_id", ""),
-            }
-            for p in panes if p.get("agent")
-        ]
-    except (json.JSONDecodeError, KeyError):
-        return []
+        panes = data["result"]["panes"]
+    except (json.JSONDecodeError, KeyError, TypeError) as exc:
+        raise HerdrQueryError(f"unreadable pane list ({exc})") from exc
+    return [
+        {
+            # Client-facing identity: unique across every session on this relay.
+            "pane_id": namespaced_id(session, p["pane_id"]),
+            "workspace_id": namespaced_id(session, p.get("workspace_id", "")),
+            "tab_id": namespaced_id(session, p.get("tab_id", "")),
+            "session_name": session or "",
+            # Bare herdr identity: what the CLI is actually given, alongside
+            # --session. Clients never send these back.
+            "herdr_pane_id": p["pane_id"],
+            "herdr_workspace_id": p.get("workspace_id", ""),
+            "herdr_tab_id": p.get("tab_id", ""),
+            "agent": p.get("agent", ""),
+            "label": p.get("label", ""),
+            "status": p.get("agent_status", "unknown"),
+            "cwd": p.get("cwd", ""),
+            "project": os.path.basename(p.get("cwd", "")),
+            "host": host_label,
+            "remote": remote,
+        }
+        for p in panes if p.get("agent")
+    ]
 
 
 def get_all_agents():
-    agents = get_agents_from_host(remote=None)
+    """Every agent across all running local sessions plus configured remotes.
+
+    A source that fails is skipped for this cycle rather than sinking the poll.
+    """
+    agents = []
+    for session in list_local_sessions():
+        label = f"local session {session!r}" if session else "local herdr"
+        try:
+            agents.extend(get_agents_from_host(remote=None, session=session))
+        except HerdrQueryError as exc:
+            _warn_change(f"poll:{session}", "skipping %s this cycle: %s", label, exc)
+            continue
+        _clear_warning(f"poll:{session}")
     for remote in REMOTES:
-        agents.extend(get_agents_from_host(remote=remote))
+        try:
+            agents.extend(get_agents_from_host(remote=remote))
+        except HerdrQueryError as exc:
+            _warn_change(f"poll@{remote}", "skipping remote %r this cycle: %s", remote, exc)
+            continue
+        _clear_warning(f"poll@{remote}")
     return agents
 
 
 def update_pane_maps(agents):
     current_pane_ids = {agent["pane_id"] for agent in agents}
+    current_workspace_ids = set()
     for agent in agents:
         pane_id = agent["pane_id"]
+        session = agent.get("session_name") or None
         pane_remote_map[pane_id] = agent.get("remote")
+        pane_session_map[pane_id] = session
+        pane_herdr_ids[pane_id] = agent.get("herdr_pane_id", pane_id)
         known_panes.add(pane_id)
         agent_cache[pane_id] = agent
+        workspace_id = agent.get("workspace_id")
+        if workspace_id:
+            current_workspace_ids.add(workspace_id)
+            workspace_targets[workspace_id] = {
+                "workspace_id": workspace_id,
+                "herdr_workspace_id": agent.get("herdr_workspace_id", workspace_id),
+                "remote": agent.get("remote"),
+                "session": session,
+            }
 
     stale = known_panes - current_pane_ids
     if stale:
         known_panes.difference_update(stale)
         for pane_id in stale:
             pane_remote_map.pop(pane_id, None)
+            pane_session_map.pop(pane_id, None)
+            pane_herdr_ids.pop(pane_id, None)
             last_statuses.pop(pane_id, None)
             last_blocked_prompts.pop(pane_id, None)
             agent_cache.pop(pane_id, None)
+    for workspace_id in set(workspace_targets) - current_workspace_ids:
+        workspace_targets.pop(workspace_id, None)
 
 
-def read_pane(pane_id, remote=None):
-    raw = run_herdr("pane", "read", pane_id, "--lines", "100", "--source", "recent", remote=remote)
+class PaneTarget(typing.NamedTuple):
+    """Where a client-supplied pane id actually points."""
+
+    pane_id: str        # canonical client-facing id, e.g. "crm:w1:p1"
+    herdr_pane_id: str  # bare id for the CLI, e.g. "w1:p1"
+    kwargs: dict        # remote/session kwargs for run_herdr
+
+
+def resolve_pane(pane_id):
+    """Resolve a client-supplied pane id, or None when it addresses nothing.
+
+    Accepts the namespaced id the relay publishes, and — when unambiguous — a
+    bare herdr id, which is what saved deep links and plugin push events carry.
+    """
+    if not pane_id:
+        return None
+    if pane_id in known_panes or pane_id in pane_herdr_ids:
+        return PaneTarget(
+            pane_id,
+            pane_herdr_ids.get(pane_id, pane_id),
+            herdr_target(pane_remote_map.get(pane_id), pane_session_map.get(pane_id)),
+        )
+    matches = [known for known, bare in pane_herdr_ids.items() if bare == pane_id]
+    if len(matches) != 1:
+        return None
+    return resolve_pane(matches[0])
+
+
+def resolve_workspace(workspace_id):
+    """Resolve a client-supplied workspace id to its owning session."""
+    if not workspace_id:
+        return None
+    entry = workspace_targets.get(workspace_id)
+    if entry is None:
+        matches = [
+            candidate for candidate in workspace_targets.values()
+            if candidate["herdr_workspace_id"] == workspace_id
+        ]
+        # Unknown workspaces keep the historical behaviour: addressed bare,
+        # against the default session.
+        entry = matches[0] if len(matches) == 1 else {
+            "herdr_workspace_id": workspace_id, "remote": None, "session": None,
+        }
+    return entry
+
+
+def read_pane(pane_id, remote=None, session=None):
+    raw = run_herdr(
+        "pane", "read", pane_herdr_ids.get(pane_id, pane_id),
+        "--lines", "100", "--source", "recent",
+        **herdr_target(remote, session),
+    )
     lines = [l for l in raw.splitlines() if l.strip() and not CHROME_RE.search(l)]
     display_lines = lines[-50:]
     question = detect_question("\n".join(lines))
@@ -412,10 +594,11 @@ def question_prompt_id(pane_id, content):
     return hashlib.sha256(signature.encode("utf-8")).hexdigest()[:20]
 
 
-def prompt_matches(pane_id, prompt_id, remote=None):
+def prompt_matches(pane_id, prompt_id, remote=None, session=None):
     if not prompt_id:
         return False
-    return question_prompt_id(pane_id, read_pane(pane_id, remote=remote)) == prompt_id
+    content = read_pane(pane_id, **herdr_target(remote, session))
+    return question_prompt_id(pane_id, content) == prompt_id
 
 
 def blocked_message(pane_id, agent, project, host, content):
@@ -449,17 +632,21 @@ def pane_is_omp(pane_id, remote=None):
     )
 
 
-def move_question_cursor(pane_id, question, target_index, remote=None):
+def move_question_cursor(pane_id, question, target_index, remote=None, session=None):
     selected_index = question["selected_index"]
     direction = "Down" if target_index >= selected_index else "Up"
     keys = [direction] * abs(target_index - selected_index)
-    return not keys or _mutate_herdr("pane", "send-keys", pane_id, *keys, remote=remote)
+    return not keys or _mutate_herdr(
+        "pane", "send-keys", pane_herdr_ids.get(pane_id, pane_id), *keys,
+        **herdr_target(remote, session),
+    )
 
 
-def toggle_question_option(pane_id, option_label, remote=None):
+def toggle_question_option(pane_id, option_label, remote=None, session=None):
     if not pane_is_omp(pane_id, remote=remote):
         return False
-    question = detect_question(read_pane(pane_id, remote=remote))
+    target = herdr_target(remote, session)
+    question = detect_question(read_pane(pane_id, **target))
     if not question or not question["multi"]:
         return False
     target_index = next((
@@ -467,15 +654,21 @@ def toggle_question_option(pane_id, option_label, remote=None):
         for index, option in enumerate(question["options"])
         if option["label"].casefold() == option_label.casefold()
     ), None)
-    if target_index is None or not move_question_cursor(pane_id, question, target_index, remote=remote):
+    if target_index is None or not move_question_cursor(
+        pane_id, question, target_index, **target
+    ):
         return False
-    return _mutate_herdr("pane", "send-keys", pane_id, "Enter", remote=remote)
+    return _mutate_herdr(
+        "pane", "send-keys", pane_herdr_ids.get(pane_id, pane_id), "Enter", **target
+    )
 
 
-def submit_multi_question(pane_id, remote=None):
+def submit_multi_question(pane_id, remote=None, session=None):
     if not pane_is_omp(pane_id, remote=remote):
         return False
-    content = read_pane(pane_id, remote=remote)
+    target = herdr_target(remote, session)
+    herdr_pane_id = pane_herdr_ids.get(pane_id, pane_id)
+    content = read_pane(pane_id, **target)
     question = detect_question(content)
     if not question or not question["multi"]:
         return False
@@ -485,17 +678,17 @@ def submit_multi_question(pane_id, remote=None):
         if "Done selecting" in option["label"]
     ), None)
     if done_index is not None:
-        if not move_question_cursor(pane_id, question, done_index, remote=remote):
+        if not move_question_cursor(pane_id, question, done_index, **target):
             return False
-        return _mutate_herdr("pane", "send-keys", pane_id, "Enter", remote=remote)
+        return _mutate_herdr("pane", "send-keys", herdr_pane_id, "Enter", **target)
     if "Submit" in content and any(
         marker in content for marker in ("\uf14a", "\uf046", "\u2611", "[x]", "[X]")
     ):
-        return _mutate_herdr("pane", "send-keys", pane_id, "Tab", "Enter", remote=remote)
+        return _mutate_herdr("pane", "send-keys", herdr_pane_id, "Tab", "Enter", **target)
     return False
 
 
-def respond_to_question(pane_id, text, question, remote=None):
+def respond_to_question(pane_id, text, question, remote=None, session=None):
     options = question["options"]
     target_index = next(
         (index for index, option in enumerate(options) if option["label"].casefold() == text.casefold()),
@@ -510,16 +703,18 @@ def respond_to_question(pane_id, text, question, remote=None):
     if target_index is None:
         return False
 
+    target = herdr_target(remote, session)
+    herdr_pane_id = pane_herdr_ids.get(pane_id, pane_id)
     selected_index = question["selected_index"]
     direction = "Down" if target_index >= selected_index else "Up"
     keys = [direction] * abs(target_index - selected_index) + ["Enter"]
-    if not _mutate_herdr("pane", "send-keys", pane_id, *keys, remote=remote):
+    if not _mutate_herdr("pane", "send-keys", herdr_pane_id, *keys, **target):
         return False
     if not custom_response:
         return True
     deadline = time.monotonic() + 1.5
     while time.monotonic() < deadline:
-        editor_content = read_pane(pane_id, remote=remote)
+        editor_content = read_pane(pane_id, **target)
         if "Enter your response:" in editor_content or (
             "Custom answer:" in editor_content and "submit" in editor_content.lower()
         ):
@@ -527,9 +722,9 @@ def respond_to_question(pane_id, text, question, remote=None):
         time.sleep(0.05)
     else:
         return False
-    return _mutate_herdr("pane", "send-text", pane_id, text, remote=remote) and _mutate_herdr(
-        "pane", "send-keys", pane_id, "Enter", remote=remote
-    )
+    return _mutate_herdr(
+        "pane", "send-text", herdr_pane_id, text, **target
+    ) and _mutate_herdr("pane", "send-keys", herdr_pane_id, "Enter", **target)
 
 
 async def broadcast(msg):
@@ -553,7 +748,7 @@ async def send_current_snapshot(ws):
     for agent in agents:
         if agent["status"] != "blocked":
             continue
-        content = read_pane(agent["pane_id"], remote=agent.get("remote"))
+        content = read_pane(agent["pane_id"], **agent_target(agent))
         await ws.send(json.dumps(blocked_message(
             agent["pane_id"],
             agent["agent"],
@@ -580,7 +775,7 @@ async def _poll_once():
         for a in agents:
             pid, status = a["pane_id"], a["status"]
             if status == "blocked":
-                content = read_pane(pid, remote=a.get("remote"))
+                content = read_pane(pid, **agent_target(a))
                 message = blocked_message(
                     pid,
                     a["agent"],
@@ -612,6 +807,16 @@ async def event_push():
     while True:
         event = await event_queue.get()
         pane_id = event.get("pane_id", "")
+        # Plugin push events carry a bare herdr pane id and no session, so map it
+        # onto the namespaced id the rest of the relay speaks. Panes never polled,
+        # and bare ids two sessions both claim, are left as sent and reconciled by
+        # the next poll rather than routed to a guess.
+        resolved = resolve_pane(pane_id)
+        if resolved is not None and resolved.pane_id != pane_id:
+            pane_id = resolved.pane_id
+            event = {**event, "pane_id": pane_id}
+        elif resolved is None and pane_id and pane_id not in known_panes:
+            log.debug("push event for unresolved pane %s; awaiting poll", pane_id)
         update = None
         if pane_id and event.get("type") == "agent_event":
             update = complete_agent_update_message(
@@ -633,6 +838,8 @@ async def event_push():
             ):
                 agents.append({
                     "pane_id": pane_id,
+                    "herdr_pane_id": pane_herdr_ids.get(pane_id, pane_id),
+                    "session_name": pane_session_map.get(pane_id) or "",
                     "agent": agent_data.get("agent", ""),
                     "status": status,
                     "cwd": agent_data.get("cwd", ""),
@@ -649,7 +856,9 @@ async def event_push():
         if status == "blocked" and pane_id:
             remote = pane_remote_map.get(pane_id)
             if remote or host == "local":
-                content = read_pane(pane_id, remote=remote)
+                content = read_pane(
+                    pane_id, **herdr_target(remote, pane_session_map.get(pane_id))
+                )
             else:
                 content = event.get("prompt", "Agent is blocked")
             message = blocked_message(
@@ -841,30 +1050,30 @@ async def handle_client(ws):
                 continue
             msg_type = msg.get("type")
             if msg_type == "question_toggle":
-                pane_id = msg["pane_id"]
+                target = resolve_pane(msg["pane_id"])
                 option = msg.get("option", "")
-                if pane_id not in known_panes or not option:
+                if target is None or not option:
                     await ws.send(json.dumps({"type": "error", "message": "invalid question option"}))
                     continue
-                remote = pane_remote_map.get(pane_id)
-                if not prompt_matches(pane_id, msg.get("prompt_id", ""), remote=remote):
+                pane_id = target.pane_id
+                if not prompt_matches(pane_id, msg.get("prompt_id", ""), **target.kwargs):
                     await ws.send(json.dumps({"type": "error", "message": "question changed; refresh and try again"}))
                     continue
-                if not toggle_question_option(pane_id, option, remote=remote):
+                if not toggle_question_option(pane_id, option, **target.kwargs):
                     await ws.send(json.dumps({"type": "error", "message": "question option toggle failed"}))
             elif msg_type == "question_submit":
-                pane_id = msg["pane_id"]
-                if pane_id not in known_panes:
+                target = resolve_pane(msg["pane_id"])
+                if target is None:
                     await ws.send(json.dumps({"type": "error", "message": "unknown pane_id"}))
                     continue
-                remote = pane_remote_map.get(pane_id)
-                if not prompt_matches(pane_id, msg.get("prompt_id", ""), remote=remote):
+                pane_id = target.pane_id
+                if not prompt_matches(pane_id, msg.get("prompt_id", ""), **target.kwargs):
                     await ws.send(json.dumps({"type": "error", "message": "question changed; refresh and try again"}))
                     continue
-                if not submit_multi_question(pane_id, remote=remote):
+                if not submit_multi_question(pane_id, **target.kwargs):
                     await ws.send(json.dumps({"type": "error", "message": "question submission failed"}))
             elif msg_type == "respond":
-                pane_id = msg["pane_id"]
+                target = resolve_pane(msg["pane_id"])
                 request_id = msg.get("request_id")
 
                 def command_error(message):
@@ -873,28 +1082,30 @@ async def handle_client(ws):
                         response["request_id"] = request_id
                     return response
 
-                if pane_id not in known_panes:
+                if target is None:
                     await ws.send(json.dumps(command_error("unknown pane_id")))
                     continue
+                pane_id = target.pane_id
                 text = msg.get("text", "").strip()
                 if not text or len(text) > 1000:
                     await ws.send(json.dumps(command_error("response empty or too long")))
                     continue
-                remote = pane_remote_map.get(pane_id)
-                content = read_pane(pane_id, remote=remote)
+                content = read_pane(pane_id, **target.kwargs)
                 if question_prompt_id(pane_id, content) != msg.get("prompt_id", ""):
                     await ws.send(json.dumps(command_error("prompt changed; refresh and try again")))
                     continue
-                question = detect_question(content) if pane_is_omp(pane_id, remote=remote) else None
+                question = detect_question(content) if pane_is_omp(
+                    pane_id, remote=target.kwargs["remote"]
+                ) else None
                 log.info("Response from %s (%s): pane=%s text=%r", ip, device, pane_id, text)
                 audit("respond", ip, device, pane_id, f"text={text!r}")
                 if question:
-                    delivered = respond_to_question(pane_id, text, question, remote=remote)
+                    delivered = respond_to_question(pane_id, text, question, **target.kwargs)
                 elif custom_editor_active(content) or text.lower() in SAFE_RESPONSES:
                     delivered = _mutate_herdr(
-                        "pane", "send-text", pane_id, text, remote=remote
+                        "pane", "send-text", target.herdr_pane_id, text, **target.kwargs
                     ) and _mutate_herdr(
-                        "pane", "send-keys", pane_id, "Enter", remote=remote
+                        "pane", "send-keys", target.herdr_pane_id, "Enter", **target.kwargs
                     )
                 else:
                     await ws.send(json.dumps({
@@ -911,8 +1122,8 @@ async def handle_client(ws):
             elif msg_type == "agent_event":
                 event_queue.put_nowait(msg)
             elif msg_type == "read_pane":
-                pane_id = msg["pane_id"]
-                if pane_id not in known_panes:
+                target = resolve_pane(msg["pane_id"])
+                if target is None:
                     await ws.send(json.dumps({"type": "error", "message": "unknown pane_id"}))
                     continue
                 lines = msg.get("lines", "30")
@@ -920,20 +1131,25 @@ async def handle_client(ws):
                 if read_format not in {"text", "ansi"}:
                     await ws.send(json.dumps({"type": "error", "message": "invalid pane read format"}))
                     continue
-                remote = pane_remote_map.get(pane_id)
                 content = run_herdr(
-                    "pane", "read", pane_id, "--lines", str(lines), "--source", "recent",
-                    "--format", read_format, remote=remote
+                    "pane", "read", target.herdr_pane_id, "--lines", str(lines),
+                    "--source", "recent", "--format", read_format, **target.kwargs
                 )
-                await ws.send(json.dumps({"type": "pane_content", "pane_id": pane_id, "content": content}))
+                # Echo the id the client asked with, so its own filtering matches.
+                await ws.send(json.dumps({
+                    "type": "pane_content", "pane_id": msg["pane_id"], "content": content
+                }))
             elif msg_type == "get_history":
-                pane_id = msg["pane_id"]
-                if pane_id not in known_panes:
+                target = resolve_pane(msg["pane_id"])
+                if target is None:
                     await ws.send(json.dumps({"type": "error", "message": "unknown pane_id"}))
                     continue
-                remote = pane_remote_map.get(pane_id)
+                pane_id = msg["pane_id"]
                 # Try to read conversation history from agent's session log
-                history = run_herdr("agent", "history", pane_id, "--format", "json", remote=remote)
+                history = run_herdr(
+                    "agent", "history", target.herdr_pane_id, "--format", "json",
+                    **target.kwargs
+                )
                 messages = []
                 try:
                     data = json.loads(history) if history else {}
@@ -942,7 +1158,7 @@ async def handle_client(ws):
                     pass
                 await ws.send(json.dumps({"type": "history", "pane_id": pane_id, "messages": messages}))
             elif msg_type == "send_keys":
-                pane_id = msg["pane_id"]
+                target = resolve_pane(msg["pane_id"])
                 request_id = msg.get("request_id")
 
                 def command_error(message):
@@ -951,15 +1167,15 @@ async def handle_client(ws):
                         response["request_id"] = request_id
                     return response
 
-                if pane_id not in known_panes:
+                if target is None:
                     await ws.send(json.dumps(command_error("unknown pane_id")))
                     continue
+                pane_id = target.pane_id
                 keys = msg.get("keys", [])
                 if not all(k in SAFE_KEYS for k in keys):
                     await ws.send(json.dumps(command_error("keys contain disallowed values")))
                     continue
-                remote = pane_remote_map.get(pane_id)
-                content = read_pane(pane_id, remote=remote)
+                content = read_pane(pane_id, **target.kwargs)
                 if detect_approval_options(content) and any(key.isdigit() for key in keys):
                     if question_prompt_id(pane_id, content) != msg.get("prompt_id", ""):
                         await ws.send(json.dumps(command_error("prompt changed; refresh and try again")))
@@ -967,7 +1183,9 @@ async def handle_client(ws):
                 log.info("Keys from %s (%s): pane=%s keys=%s", ip, device, pane_id, keys)
                 audit("send_keys", ip, device, pane_id, f"keys={keys}")
                 try:
-                    result = run_herdr_result("pane", "send-keys", pane_id, *keys, remote=remote)
+                    result = run_herdr_result(
+                        "pane", "send-keys", target.herdr_pane_id, *keys, **target.kwargs
+                    )
                 except Exception as exc:
                     log.warning("send_keys command failed for pane %s: %s", pane_id, exc)
                     await ws.send(json.dumps(command_error("send_keys command failed")))
@@ -981,39 +1199,43 @@ async def handle_client(ws):
                     response["request_id"] = request_id
                 await ws.send(json.dumps(response))
             elif msg_type == "send_text":
-                pane_id = msg["pane_id"]
-                if pane_id not in known_panes:
+                target = resolve_pane(msg["pane_id"])
+                if target is None:
                     await ws.send(json.dumps({"type": "error", "message": "unknown pane_id"}))
                     continue
+                pane_id = target.pane_id
                 text = msg.get("text", "")
                 if not text or len(text) > 1000:
                     await ws.send(json.dumps({"type": "error", "message": "text empty or too long"}))
                     continue
-                remote = pane_remote_map.get(pane_id)
                 log.info("Text from %s (%s): pane=%s text=%r", ip, device, pane_id, text)
                 audit("send_text", ip, device, pane_id, f"text={text!r}")
-                run_herdr("pane", "send-text", pane_id, text, remote=remote)
+                run_herdr("pane", "send-text", target.herdr_pane_id, text, **target.kwargs)
             elif msg_type == "agent_prompt":
                 # Use 'herdr agent prompt' for proper submission (works with Codex, Claude, etc.)
-                pane_id = msg["pane_id"]
-                if pane_id not in known_panes:
+                target = resolve_pane(msg["pane_id"])
+                if target is None:
                     await ws.send(json.dumps({"type": "error", "message": "unknown pane_id"}))
                     continue
+                pane_id = target.pane_id
                 text = msg.get("text", "")
                 if not text or len(text) > 10000:
                     await ws.send(json.dumps({"type": "error", "message": "text empty or too long"}))
                     continue
-                remote = pane_remote_map.get(pane_id)
                 log.info("Agent prompt from %s (%s): pane=%s text=%r", ip, device, pane_id, text[:100])
                 audit("agent_prompt", ip, device, pane_id, f"text={text[:100]!r}")
-                run_herdr("agent", "prompt", pane_id, text, remote=remote)
+                run_herdr("agent", "prompt", target.herdr_pane_id, text, **target.kwargs)
                 await ws.send(json.dumps({"type": "command_result", "command": "agent_prompt", "ok": True}))
             elif msg_type == "create_tab":
                 workspace_id = msg.get("workspace_id", "")
-                if workspace_id:
+                workspace = resolve_workspace(workspace_id)
+                if workspace:
                     log.info("Create tab from %s (%s): workspace=%s", ip, device, workspace_id)
                     audit("create_tab", ip, device, "", f"workspace={workspace_id}")
-                    run_herdr("tab", "create", "--workspace", workspace_id, "--focus")
+                    run_herdr(
+                        "tab", "create", "--workspace", workspace["herdr_workspace_id"],
+                        "--focus", **herdr_target(workspace["remote"], workspace["session"])
+                    )
                     await ws.send(json.dumps({"type": "tab_created", "ok": True}))
                 else:
                     await ws.send(json.dumps({"type": "error", "message": "workspace_id required"}))
@@ -1089,7 +1311,11 @@ async def main():
             log.warning("UDP 8376 in use, plugin push disabled")
         tasks = [asyncio.create_task(poll_loop()), asyncio.create_task(event_push())]
         server = await serve(handle_client, RELAY_HOST, WS_PORT, process_request=process_request)
-        hosts = ["local"] + REMOTES
+        local_sessions = list_local_sessions()
+        hosts = [
+            f"local:{session}" if session else "local" for session in local_sessions
+        ] or ["local (no running session)"]
+        hosts += REMOTES
         log.info("herdr-remote relay on %s:%d (WebSocket + HTTP POST)", RELAY_HOST, WS_PORT)
         log.info("Polling: %s", ", ".join(hosts))
         for sig in (signal.SIGINT, signal.SIGTERM):

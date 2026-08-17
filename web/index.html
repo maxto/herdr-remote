@@ -80,6 +80,7 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
 .chip:active { transform: scale(0.95); }
 .chip-add { border: 2px dashed var(--border); background: transparent; color: var(--muted); font-size: 1rem; padding: 4px 12px; }
 .chip-add:hover { border-color: var(--blue); color: var(--blue); }
+.session-badge { font-family: monospace; font-size: 0.6rem; font-weight: 600; padding: 1px 5px; border-radius: 4px; background: color-mix(in srgb, var(--blue) 18%, transparent); color: var(--blue); vertical-align: middle; margin-right: 5px; }
 .agent .info { flex: 1; }
 .agent .project { font-size: 0.9rem; font-weight: 500; }
 .agent .meta { font-size: 0.7rem; color: var(--muted); margin-top: 2px; }
@@ -334,6 +335,15 @@ let ws = null, agents = [], activePane = null, refreshInterval = null, userScrol
 let timeline = [], prevStatuses = {};
 let activeWorkspace = null;
 let activeTab = null;
+// Named herdr session filter. Pane/workspace/tab ids are only unique within a
+// session, so the relay namespaces them and tags every agent with session_name.
+let activeSession = null;
+
+const escAttr = value => String(value ?? '')
+  .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
+const sessionBadge = a => a.session_name
+  ? `<span class="session-badge" title="herdr session">${escAttr(a.session_name)}</span>`
+  : '';
 
 // Settings — auto-detect relay when served from same origin
 const autoRelayUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
@@ -653,17 +663,22 @@ function handleMessage(msg) {
 
 function render() {
   document.getElementById('agentCount').textContent = agents.length ? `${agents.length}` : '';
+  const sessions = [...new Set(agents.map(a => a.session_name).filter(Boolean))];
+  // workspace_id arrives namespaced by session, so same-named spaces in
+  // different sessions never collapse into one group.
   const workspaces = [...new Set(agents.map(a => a.workspace_id).filter(Boolean))];
-  if (workspaces.length <= 1) {
+  if (activeSession && !sessions.includes(activeSession)) activeSession = null;
+  if (sessions.length <= 1 && workspaces.length <= 1) {
+    activeSession = null;
     activeWorkspace = null;
     activeTab = null;
     renderAgentList(agents);
     return;
   }
-  renderWorkspaces(workspaces);
+  renderWorkspaces(sessions, workspaces);
 }
 
-function renderWorkspaces(workspaces) {
+function renderWorkspaces(sessions, workspaces) {
   let html = '';
   // Hoist blocked agents
   const blocked = agents.filter(a => a.status === 'blocked');
@@ -671,14 +686,32 @@ function renderWorkspaces(workspaces) {
     html += `<div class="section-header" style="color:var(--red)"><span class="dot" style="background:var(--red)"></span>Needs you <span style="opacity:0.6">(${blocked.length})</span></div>`;
     html += blocked.map(a => agentCard(a)).join('');
   }
-  // Space chip strip
+  // Session chip strip — only meaningful with more than one named session
+  if (sessions.length > 1) {
+    html += `<div class="chip-strip"><span class="chip-label">Sessions</span>`;
+    html += `<button class="chip${activeSession===null?' active':''}" onclick="selectSession(null)">All</button>`;
+    for (const name of sessions) {
+      const sessionAgents = agents.filter(a => a.session_name === name);
+      const hasBlocked = sessionAgents.some(a => a.status === 'blocked');
+      html += `<button class="chip${activeSession===name?' active':''}${hasBlocked?' alert':''}" data-session="${escAttr(name)}" onclick="selectSession(this.dataset.session)">${escAttr(name)}</button>`;
+    }
+    html += `</div>`;
+  }
+  // Space chip strip, scoped to the selected session
+  const visibleWorkspaces = activeSession
+    ? workspaces.filter(wsId => agents.some(a => a.workspace_id === wsId && a.session_name === activeSession))
+    : workspaces;
+  if (activeWorkspace && !visibleWorkspaces.includes(activeWorkspace)) {
+    activeWorkspace = null;
+    activeTab = null;
+  }
   html += `<div class="chip-strip"><span class="chip-label">Spaces</span>`;
   html += `<button class="chip${activeWorkspace===null?' active':''}" onclick="backToWorkspaces()">All</button>`;
-  for (const wsId of workspaces) {
+  for (const wsId of visibleWorkspaces) {
     const wsAgents = agents.filter(a => a.workspace_id === wsId);
     const hasBlocked = wsAgents.some(a => a.status === 'blocked');
-    const name = wsAgents[0]?.project || wsId.slice(0, 8);
-    html += `<button class="chip${activeWorkspace===wsId?' active':''}${hasBlocked?' alert':''}" onclick="selectWorkspace('${wsId}')">${name}</button>`;
+    const name = wsAgents[0]?.project || wsAgents[0]?.herdr_workspace_id || wsId;
+    html += `<button class="chip${activeWorkspace===wsId?' active':''}${hasBlocked?' alert':''}" data-workspace-id="${escAttr(wsId)}" onclick="selectWorkspace(this.dataset.workspaceId)">${escAttr(name)}</button>`;
   }
   html += `</div>`;
   // Tab chip strip (always show when workspace selected)
@@ -692,13 +725,14 @@ function renderWorkspaces(workspaces) {
       const tabAgents = agents.filter(a => a.tab_id === tid);
       const hasBlocked = tabAgents.some(a => a.status === 'blocked');
       const tabLabel = tabAgents[0]?.label || 'Tab '+(i+1);
-      html += `<button class="chip${activeTab===tid?' active':''}${hasBlocked?' alert':''}" id="tab-${tid}" onclick="selectTab('${tid}')" data-tab-id="${tid}" data-tab-name="${tabLabel}">${tabLabel}</button>`;
+      html += `<button class="chip${activeTab===tid?' active':''}${hasBlocked?' alert':''}" id="tab-${tid}" onclick="selectTab(this.dataset.tabId)" data-tab-id="${escAttr(tid)}" data-tab-name="${escAttr(tabLabel)}">${escAttr(tabLabel)}</button>`;
     });
-    html += `<button class="chip chip-add" onclick="createTab('${activeWorkspace}')">+</button>`;
+    html += `<button class="chip chip-add" data-workspace-id="${escAttr(activeWorkspace)}" onclick="createTab(this.dataset.workspaceId)">+</button>`;
     html += `</div>`;
   }
   // Agent list (filtered)
   let filtered = agents;
+  if (activeSession) filtered = filtered.filter(a => a.session_name === activeSession);
   if (activeWorkspace) filtered = filtered.filter(a => a.workspace_id === activeWorkspace);
   if (activeTab) filtered = filtered.filter(a => a.tab_id === activeTab);
   // Don't re-show blocked that are already hoisted
@@ -742,6 +776,7 @@ function bindLongPressHandlers() {
   });
 }
 
+function selectSession(name) { activeSession = name; activeWorkspace = null; activeTab = null; render(); }
 function selectWorkspace(id) { activeWorkspace = id; activeTab = null; render(); }
 function backToWorkspaces() { activeWorkspace = null; activeTab = null; render(); }
 function selectTab(id) { activeTab = id; render(); }
@@ -759,9 +794,12 @@ function agentCard(a) {
   const host = a.host&&a.host!=='local'?` <span style="color:var(--orange);font-size:0.6rem">@${a.host}</span>`:'';
   const cwd = a.cwd ? `<span style="font-family:monospace;opacity:0.7">${a.cwd.split('/').slice(-2).join('/')}</span>` : '';
   const label = a.label||a.project||a.agent;
-  return `<div class="agent${a.status==='blocked'?' blocked':''}" role="button" tabindex="0" aria-label="${label}, ${a.status}" data-pane-id="${a.pane_id}" data-agent-name="${label}" onclick="openTerminal('${a.pane_id}')" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal('${a.pane_id}')}">
+  // The pane reference is only unambiguous together with its session, so show both.
+  const paneRef = a.herdr_pane_id ? `<span style="font-family:monospace;opacity:0.7">${escAttr(a.herdr_pane_id)}</span> · ` : '';
+  const ariaSession = a.session_name ? `session ${a.session_name}, ` : '';
+  return `<div class="agent${a.status==='blocked'?' blocked':''}" role="button" tabindex="0" aria-label="${ariaSession}${label}, ${a.status}" data-pane-id="${escAttr(a.pane_id)}" data-agent-name="${escAttr(label)}" onclick="openTerminal(this.dataset.paneId)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal(this.dataset.paneId)}">
     <span class="dot${pulseClass}" style="background:${color}" aria-hidden="true"></span>
-    <div class="info"><div class="project">${label}${host}</div><div class="meta">${a.agent} · ${cwd}</div></div>
+    <div class="info"><div class="project">${sessionBadge(a)}${label}${host}</div><div class="meta">${a.agent} · ${paneRef}${cwd}</div></div>
     <span style="color:var(--muted);font-size:1.2rem" aria-hidden="true">›</span>
   </div>`;
 }
@@ -774,7 +812,9 @@ function section(title, color, list) {
 function openTerminal(paneId) {
   activePane = paneId; paneLines = 200; userScrolledUp = false;
   const a = agents.find(x => x.pane_id===paneId);
-  document.getElementById('termTitle').textContent = a?`${a.label||a.project} · ${a.agent}`:paneId;
+  // Keep the owning session in the header: it says where a read/write lands.
+  const scope = a && a.session_name ? `${a.session_name} / ${a.herdr_pane_id||''} · ` : '';
+  document.getElementById('termTitle').textContent = a?`${scope}${a.label||a.project} · ${a.agent}`:paneId;
   document.getElementById('agentListView').style.display = 'none';
   if (refreshInterval) clearInterval(refreshInterval);
   document.getElementById('terminalView').classList.add('active');
