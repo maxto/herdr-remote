@@ -79,6 +79,10 @@ echo "10. web app no hardcoded secrets"
 ! grep -q "c4a2385e" "$WEB" && ! grep -q "graffold" "$WEB"
 assert_eq "$?" "0" "no secrets in web app"
 
+echo "10b. web app strips URL and saved-session tokens"
+node "$DIR/tests/test_web_security.js"
+assert_eq "$?" "0" "web token handling"
+
 # --- macOS app ---
 echo ""
 echo "=== macOS app ==="

@@ -329,6 +329,7 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
   </div>
 </div>
 
+<script src="./security.js"></script>
 <script>
 
 let ws = null, agents = [], activePane = null, refreshInterval = null, userScrolledUp = false;
@@ -375,8 +376,8 @@ const DEMO_RELAY = 'wss://herdr-remote-demo.yyrzrh5wfg.workers.dev';
 const isDemo = location.hostname.includes('herdr-demo.pages.dev');
 const isSelfRelay = !isDemo && !location.hostname.includes('pages.dev') && !location.hostname.includes('localhost');
 const savedUrl = localStorage.getItem('herdr_relay_url') || (isSelfRelay ? autoRelayUrl : (isDemo ? DEMO_RELAY : ''));
-const urlToken = new URLSearchParams(location.search).get('token');
-if (urlToken) localStorage.setItem('herdr_relay_token', urlToken);
+const cleanedPageUrl = HerdrSecurity.stripTokenFromUrl(location.href);
+if (cleanedPageUrl.changed) history.replaceState(history.state, '', cleanedPageUrl.relativeUrl);
 const savedToken = localStorage.getItem('herdr_relay_token') || '';
 document.getElementById('relayUrl').value = savedUrl;
 document.getElementById('relayToken').value = savedToken;
@@ -429,8 +430,9 @@ function saveAndConnect() {
 
 // Session switcher
 function getSessions() {
-  try { return JSON.parse(localStorage.getItem('herdr_sessions') || '[]'); }
-  catch { return []; }
+  const result = HerdrSecurity.sanitizeSavedSessions(localStorage.getItem('herdr_sessions'));
+  if (result.changed) saveSessions(result.sessions);
+  return result.sessions;
 }
 
 function saveSessions(sessions) {
@@ -447,7 +449,7 @@ function saveCurrentSession() {
   if (existing >= 0) {
     sessions[existing].name = name;
   } else {
-    sessions.push({ name, url, token: document.getElementById('relayToken').value.trim() || '' });
+    sessions.push({ name, url });
   }
   saveSessions(sessions);
   renderSessions();
@@ -459,8 +461,16 @@ function switchSession(idx) {
   const s = sessions[idx];
   if (!s) return;
   document.getElementById('relayUrl').value = s.url;
-  document.getElementById('relayToken').value = s.token || '';
-  saveAndConnect();
+  document.getElementById('relayToken').value = '';
+  localStorage.setItem('herdr_relay_url', s.url);
+  localStorage.removeItem('herdr_relay_token');
+  if (ws) ws.close();
+  setStatus('disconnected');
+  document.getElementById('settingsView').style.display = 'block';
+  document.getElementById('agentListView').style.display = 'none';
+  document.getElementById('timelineView').style.display = 'none';
+  renderSessions();
+  document.getElementById('relayToken').focus();
 }
 
 function deleteSession(idx, e) {
