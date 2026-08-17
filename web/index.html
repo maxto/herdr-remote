@@ -813,8 +813,10 @@ function openTerminal(paneId) {
   activePane = paneId; paneLines = 200; userScrolledUp = false;
   const a = agents.find(x => x.pane_id===paneId);
   // Keep the owning session in the header: it says where a read/write lands.
+  // Sessions are usually named after their project, so drop the duplicate.
   const scope = a && a.session_name ? `${a.session_name} / ${a.herdr_pane_id||''} · ` : '';
-  document.getElementById('termTitle').textContent = a?`${scope}${a.label||a.project} · ${a.agent}`:paneId;
+  const name = a && (a.label||a.project) !== a.session_name ? `${a.label||a.project} · ` : '';
+  document.getElementById('termTitle').textContent = a?`${scope}${name}${a.agent}`:paneId;
   document.getElementById('agentListView').style.display = 'none';
   if (refreshInterval) clearInterval(refreshInterval);
   document.getElementById('terminalView').classList.add('active');
