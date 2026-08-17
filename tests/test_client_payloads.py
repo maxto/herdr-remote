@@ -37,6 +37,19 @@ class ClientPayloadTests(unittest.TestCase):
         self.assertIn("openTerminal(this.dataset.paneId)", source)
         self.assertNotIn("`${a.session_name}:${a.herdr_pane_id}`", source)
 
+    def test_web_shows_the_session_only_where_it_disambiguates(self):
+        source = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+
+        # The badge is gated on two sessions claiming the same agent name, so a
+        # one-session-per-project layout keeps its existing, quieter cards.
+        self.assertIn("ambiguousLabels", source)
+        self.assertIn("needsSessionLabel", source)
+        self.assertIn("sessions.size > 1", source)
+        # The Sessions strip stays hidden while Spaces already maps 1:1 to
+        # sessions, but must remain reachable once a session filter is active.
+        self.assertIn("showSessions", source)
+        self.assertIn("activeSession !== null", source)
+
     def test_swift_models_decode_omp_question_state(self):
         for relative_path in (
             "herdi-ios/Sources/Models/Agent.swift",

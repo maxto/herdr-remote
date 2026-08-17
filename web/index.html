@@ -341,9 +341,33 @@ let activeSession = null;
 
 const escAttr = value => String(value ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-const sessionBadge = a => a.session_name
+
+const agentLabel = a => a.label || a.project || a.agent;
+
+// A session name is only worth showing when it disambiguates. Sessions are
+// normally named after their project, so the folder already says which one you
+// are looking at — until two sessions hold an agent with the same name, and
+// then the folder cannot tell them apart at all.
+let ambiguousLabels = new Set();
+function trackAmbiguousLabels() {
+  const sessionsByLabel = new Map();
+  for (const a of agents) {
+    const label = agentLabel(a);
+    if (!sessionsByLabel.has(label)) sessionsByLabel.set(label, new Set());
+    sessionsByLabel.get(label).add(a.session_name || '');
+  }
+  ambiguousLabels = new Set(
+    [...sessionsByLabel].filter(([, sessions]) => sessions.size > 1).map(([label]) => label)
+  );
+}
+const needsSessionLabel = a => Boolean(a.session_name) && ambiguousLabels.has(agentLabel(a));
+const sessionBadge = a => needsSessionLabel(a)
   ? `<span class="session-badge" title="herdr session">${escAttr(a.session_name)}</span>`
   : '';
+const spaceLabel = wsId => {
+  const wsAgents = agents.filter(a => a.workspace_id === wsId);
+  return wsAgents[0]?.project || wsAgents[0]?.herdr_workspace_id || wsId;
+};
 
 // Settings — auto-detect relay when served from same origin
 const autoRelayUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + location.host;
@@ -663,6 +687,7 @@ function handleMessage(msg) {
 
 function render() {
   document.getElementById('agentCount').textContent = agents.length ? `${agents.length}` : '';
+  trackAmbiguousLabels();
   const sessions = [...new Set(agents.map(a => a.session_name).filter(Boolean))];
   // workspace_id arrives namespaced by session, so same-named spaces in
   // different sessions never collapse into one group.
@@ -686,8 +711,17 @@ function renderWorkspaces(sessions, workspaces) {
     html += `<div class="section-header" style="color:var(--red)"><span class="dot" style="background:var(--red)"></span>Needs you <span style="opacity:0.6">(${blocked.length})</span></div>`;
     html += blocked.map(a => agentCard(a)).join('');
   }
-  // Session chip strip — only meaningful with more than one named session
-  if (sessions.length > 1) {
+  // While every session holds exactly one distinctly-named space, the Spaces
+  // strip already *is* the session axis and a second row of chips would only
+  // repeat it. Show Sessions once that stops being true — or once the user has
+  // filtered by one, so the way back to All stays reachable.
+  const spaceLabels = workspaces.map(spaceLabel);
+  const showSessions = sessions.length > 1 && (
+    activeSession !== null
+    || workspaces.length !== sessions.length
+    || spaceLabels.length !== new Set(spaceLabels).size
+  );
+  if (showSessions) {
     html += `<div class="chip-strip"><span class="chip-label">Sessions</span>`;
     html += `<button class="chip${activeSession===null?' active':''}" onclick="selectSession(null)">All</button>`;
     for (const name of sessions) {
@@ -710,8 +744,7 @@ function renderWorkspaces(sessions, workspaces) {
   for (const wsId of visibleWorkspaces) {
     const wsAgents = agents.filter(a => a.workspace_id === wsId);
     const hasBlocked = wsAgents.some(a => a.status === 'blocked');
-    const name = wsAgents[0]?.project || wsAgents[0]?.herdr_workspace_id || wsId;
-    html += `<button class="chip${activeWorkspace===wsId?' active':''}${hasBlocked?' alert':''}" data-workspace-id="${escAttr(wsId)}" onclick="selectWorkspace(this.dataset.workspaceId)">${escAttr(name)}</button>`;
+    html += `<button class="chip${activeWorkspace===wsId?' active':''}${hasBlocked?' alert':''}" data-workspace-id="${escAttr(wsId)}" onclick="selectWorkspace(this.dataset.workspaceId)">${escAttr(spaceLabel(wsId))}</button>`;
   }
   html += `</div>`;
   // Tab chip strip (always show when workspace selected)
@@ -793,10 +826,12 @@ function agentCard(a) {
   const pulseClass = a.status==='working'?' pulse':'';
   const host = a.host&&a.host!=='local'?` <span style="color:var(--orange);font-size:0.6rem">@${a.host}</span>`:'';
   const cwd = a.cwd ? `<span style="font-family:monospace;opacity:0.7">${a.cwd.split('/').slice(-2).join('/')}</span>` : '';
-  const label = a.label||a.project||a.agent;
-  // The pane reference is only unambiguous together with its session, so show both.
-  const paneRef = a.herdr_pane_id ? `<span style="font-family:monospace;opacity:0.7">${escAttr(a.herdr_pane_id)}</span> · ` : '';
-  const ariaSession = a.session_name ? `session ${a.session_name}, ` : '';
+  const label = agentLabel(a);
+  // Two agents that share a name need their pane reference too, or the cards
+  // still read identically.
+  const paneRef = needsSessionLabel(a) && a.herdr_pane_id
+    ? `<span style="font-family:monospace;opacity:0.7">${escAttr(a.herdr_pane_id)}</span> · ` : '';
+  const ariaSession = needsSessionLabel(a) ? `session ${a.session_name}, ` : '';
   return `<div class="agent${a.status==='blocked'?' blocked':''}" role="button" tabindex="0" aria-label="${ariaSession}${label}, ${a.status}" data-pane-id="${escAttr(a.pane_id)}" data-agent-name="${escAttr(label)}" onclick="openTerminal(this.dataset.paneId)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal(this.dataset.paneId)}">
     <span class="dot${pulseClass}" style="background:${color}" aria-hidden="true"></span>
     <div class="info"><div class="project">${sessionBadge(a)}${label}${host}</div><div class="meta">${a.agent} · ${paneRef}${cwd}</div></div>
