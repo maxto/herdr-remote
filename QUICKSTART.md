@@ -52,6 +52,20 @@ export HERDR_RELAY="https://your-tunnel.trycloudflare.com"
 herdr server reload-config
 ```
 
+Before installing a token-protected relay for the production Pages frontend,
+configure its exact trusted browser origin as non-secret configuration:
+
+```bash
+export HERDR_RELAY_TRUSTED_ORIGINS=https://herdr-remote-bfd.pages.dev
+./relay/install-service.sh
+```
+
+Open [herdr-remote-bfd.pages.dev](https://herdr-remote-bfd.pages.dev), then
+enter the clean tunnel relay URL and browser token separately. The browser keeps
+the token only in memory and forgets it on refresh. Never add a token to a Pages
+URL or relay URL. For protected HTTP requests, use
+`Authorization: Bearer <relay-token>` with a redacted placeholder.
+
 ## 4. Monitor
 
 **Telegram:** send `/status`, then `/agents`, `/read`, or `/reply` to your bot.

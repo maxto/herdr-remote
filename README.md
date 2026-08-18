@@ -158,6 +158,21 @@ $env:HERDR_RELAY_TOKEN = [guid]::NewGuid().ToString("N")
 uv run relay/herdr_relay.py
 ```
 
+Managed installs keep the relay endpoint and token separate: `HERDR_RELAY` is
+the clean relay URL, while `HERDR_RELAY_TOKEN` is stored only in
+`~/.config/herdr-remote/secrets.env` (mode `0600`). Configure trusted browser
+origins as non-secret configuration. For the production Pages frontend, use:
+
+```bash
+export HERDR_RELAY_TRUSTED_ORIGINS=https://herdr-remote-bfd.pages.dev
+./relay/install-service.sh
+```
+
+In the browser, enter the relay URL and token in separate fields. The token is
+kept only in memory and is forgotten on refresh. Never add it to a Pages URL or
+relay URL. For protected HTTP calls, use `Authorization: Bearer <relay-token>`;
+keep the placeholder redacted in scripts, logs, and documentation.
+
 ## Requirements
 
 - macOS 14+ (menu bar app)

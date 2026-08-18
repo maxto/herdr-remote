@@ -372,7 +372,7 @@ fi
 
 HERDR_RELAY_TOKEN="$RELAY_TOKEN"
 HERDR_RELAY="ws://127.0.0.1:$WS_PORT"
-[ -n "$HERDR_RELAY_TOKEN" ] && HERDR_RELAY="$HERDR_RELAY?token=$HERDR_RELAY_TOKEN"
+RELAY_TRUSTED_ORIGINS="${HERDR_RELAY_TRUSTED_ORIGINS:-}"
 
 # --- Telegram configuration ---
 
@@ -892,6 +892,7 @@ HERDR_CLOUDFLARED_PATH=${CLOUDFLARED_PATH:-}
 HERDR_TG_ENABLED=$TELEGRAM_ENABLED
 HERDR_TG_USERNAME=${HERDR_TG_USERNAME:-}
 HERDR_TG_CHAT_TYPE=${HERDR_TG_CHAT_TYPE:-unknown}
+HERDR_RELAY_TRUSTED_ORIGINS=$RELAY_TRUSTED_ORIGINS
 EOF
 )
 chmod 644 "$CONFIG_TMP"
@@ -1351,14 +1352,12 @@ echo "  [ok] Port $WS_PORT is listening"
 if [ "${HERDR_INSTALL_SKIP_WEBSOCKET_SMOKE:-0}" = "1" ]; then
     SMOKE_RESULT="ws_ok:skip"
 else
-    SMOKE_RESULT=$(WS_PORT="$WS_PORT" RELAY_TOKEN="${HERDR_RELAY_TOKEN:-}" python3 -c '
-import asyncio, json, os, urllib.parse
+SMOKE_RESULT=$(WS_PORT="$WS_PORT" RELAY_TOKEN="${HERDR_RELAY_TOKEN:-}" python3 -c '
+import asyncio, json, os
 async def test():
     port = os.environ["WS_PORT"]
     token = os.environ.get("RELAY_TOKEN", "")
     url = f"ws://127.0.0.1:{port}"
-    if token:
-        url += "?token=" + urllib.parse.quote(token, safe="")
     try:
         import websockets
     except ImportError:
@@ -1366,6 +1365,12 @@ async def test():
         return
     try:
         async with websockets.connect(url, open_timeout=5) as ws:
+            if token:
+                await ws.send(json.dumps({"type": "auth", "protocol": 1, "token": token}))
+                auth = json.loads(await asyncio.wait_for(ws.recv(), timeout=5))
+                if auth != {"type": "auth_result", "protocol": 1, "ok": True}:
+                    print("ws_fail:authentication")
+                    return
             msg = await asyncio.wait_for(ws.recv(), timeout=10)
             data = json.loads(msg)
             if data.get("type") == "agents":

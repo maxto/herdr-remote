@@ -138,6 +138,7 @@ run_install() {
         HERDR_LOG_DIR= \
         HERDR_RELAY= \
         HERDR_RELAY_TOKEN= \
+        HERDR_RELAY_TRUSTED_ORIGINS="${HERDR_RELAY_TRUSTED_ORIGINS:-}" \
         HERDR_TG_CHAT_ID= \
         HERDR_TG_CHAT_TYPE= \
         HERDR_TG_ENABLED= \
@@ -257,7 +258,19 @@ assert_contains "$MAC_HOME/Library/LaunchAgents/com.herdr-remote.telegram.plist"
 assert_not_contains "$MAC_HOME/Library/LaunchAgents/com.herdr-remote.telegram.plist" '123456:ABC_def'
 python3 -c 'import os, stat, sys; info = os.stat(sys.argv[1]); mode = stat.S_IMODE(info.st_mode); raise SystemExit(0 if mode == 0o600 and info.st_uid == os.getuid() else 1)' "$MAC_HOME/.config/herdr-remote/secrets.env"
 python3 -c 'import os, stat, sys; info = os.stat(sys.argv[1]); mode = stat.S_IMODE(info.st_mode); raise SystemExit(0 if mode == 0o644 and info.st_uid == os.getuid() else 1)' "$MAC_HOME/.config/herdr-remote/config.env"
+assert_contains "$MAC_HOME/.config/herdr-remote/secrets.env" 'HERDR_RELAY=ws://127.0.0.1:8375'
+assert_not_contains "$MAC_HOME/.config/herdr-remote/secrets.env" 'HERDR_RELAY=.*token='
+assert_contains "$MAC_HOME/.config/herdr-remote/secrets.env" 'HERDR_RELAY_TOKEN='
 assert_contains "$TMP/mac-new.log" 'Telegram bot verified as @installer_test_bot'
+
+TRUSTED_ORIGIN_HOME="$TMP/trusted-origin-home"
+HERDR_RELAY_TRUSTED_ORIGINS=https://herdr-remote-bfd.pages.dev \
+    run_install macos "$TRUSTED_ORIGIN_HOME" 'ynn' > "$TMP/trusted-origin.log" || {
+    cat "$TMP/trusted-origin.log"
+    exit 1
+}
+assert_contains "$TRUSTED_ORIGIN_HOME/.config/herdr-remote/config.env" 'HERDR_RELAY_TRUSTED_ORIGINS=https://herdr-remote-bfd.pages.dev'
+assert_not_contains "$TRUSTED_ORIGIN_HOME/.config/herdr-remote/secrets.env" 'HERDR_RELAY_TRUSTED_ORIGINS='
 
 run_install macos "$MAC_HOME" 'yyyyn' > "$TMP/mac-retain.log" || {
     cat "$TMP/mac-retain.log"
