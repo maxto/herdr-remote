@@ -7,11 +7,6 @@
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <link rel="manifest" href="data:application/json,{&quot;name&quot;:&quot;herdr-remote&quot;,&quot;short_name&quot;:&quot;herdr&quot;,&quot;display&quot;:&quot;standalone&quot;,&quot;background_color&quot;:&quot;%23e1e2e7&quot;,&quot;theme_color&quot;:&quot;%23e1e2e7&quot;}">
 <title>herdr-remote</title>
-<script type="module">
-import { play, bind } from 'https://esm.sh/cuelume@0.1.2';
-window.cue = play;
-document.addEventListener('DOMContentLoaded', () => bind());
-</script>
 <style data-font-face>
 @font-face {
   font-family: 'Hack Nerd Font';
@@ -333,6 +328,7 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
 <script>
 
 let ws = null, agents = [], activePane = null, refreshInterval = null, userScrolledUp = false;
+let connectionStatus = 'disconnected';
 let timeline = [], prevStatuses = {};
 let activeWorkspace = null;
 let activeTab = null;
@@ -378,9 +374,10 @@ const isSelfRelay = !isDemo && !location.hostname.includes('pages.dev') && !loca
 const savedUrl = localStorage.getItem('herdr_relay_url') || (isSelfRelay ? autoRelayUrl : (isDemo ? DEMO_RELAY : ''));
 const cleanedPageUrl = HerdrSecurity.stripTokenFromUrl(location.href);
 if (cleanedPageUrl.changed) history.replaceState(history.state, '', cleanedPageUrl.relativeUrl);
-const savedToken = localStorage.getItem('herdr_relay_token') || '';
+HerdrSecurity.clearLegacyRelayToken(localStorage);
+let relayToken = '';
 document.getElementById('relayUrl').value = savedUrl;
-document.getElementById('relayToken').value = savedToken;
+document.getElementById('relayToken').value = '';
 
 
 
@@ -391,7 +388,7 @@ function toggleSettings() {
   document.getElementById('agentListView').style.display = show ? 'none' : '';
   document.getElementById('timelineView').style.display = 'none';
   if (show) {
-    document.getElementById('settingsStatus').innerHTML = ws && ws.readyState === 1
+    document.getElementById('settingsStatus').innerHTML = connectionStatus === 'connected'
       ? `<span style="color:var(--green)">● Connected</span> · ${agents.length} agents`
       : `<span style="color:var(--red)">● Disconnected</span>`;
     renderSessions();
@@ -421,9 +418,8 @@ function saveAndConnect() {
   const url = document.getElementById('relayUrl').value.trim();
   if (!url) return;
   localStorage.setItem('herdr_relay_url', url);
-  const token = document.getElementById('relayToken').value.trim();
-  if (token) localStorage.setItem('herdr_relay_token', token);
-  else localStorage.removeItem('herdr_relay_token');
+  relayToken = document.getElementById('relayToken').value.trim();
+  document.getElementById('relayToken').value = '';
   connect();
   toggleSettings();
 }
@@ -460,10 +456,11 @@ function switchSession(idx) {
   const sessions = getSessions();
   const s = sessions[idx];
   if (!s) return;
+  relayToken = '';
   document.getElementById('relayUrl').value = s.url;
   document.getElementById('relayToken').value = '';
   localStorage.setItem('herdr_relay_url', s.url);
-  localStorage.removeItem('herdr_relay_token');
+  HerdrSecurity.clearLegacyRelayToken(localStorage);
   if (ws) ws.close();
   setStatus('disconnected');
   document.getElementById('settingsView').style.display = 'block';
@@ -502,27 +499,44 @@ function renderSessions() {
 
 // Connection
 function connect() {
-  let url = localStorage.getItem('herdr_relay_url') || (isSelfRelay ? autoRelayUrl : (isDemo ? DEMO_RELAY : ''));
+  const url = localStorage.getItem('herdr_relay_url') || (isSelfRelay ? autoRelayUrl : (isDemo ? DEMO_RELAY : ''));
   if (!url) { showSetup(); return; }
   if (ws) ws.close();
   setStatus('connecting');
-  // Append token as query param if stored separately
-  const token = localStorage.getItem('herdr_relay_token');
-  let wsUrl = url;
-  if (token) wsUrl += (url.includes('?') ? '&' : '?') + 'token=' + encodeURIComponent(token);
-  ws = new WebSocket(wsUrl);
-  ws.onopen = () => { setStatus('connected'); if(window.cue) cue('ready'); };
+  const connection = HerdrSecurity.createAuthenticatedConnection(url, relayToken);
+  ws = new WebSocket(connection.url);
+  ws.onopen = () => {
+    if (relayToken) {
+      setStatus('authenticating');
+      ws.send(JSON.stringify(connection.authMessage));
+      return;
+    }
+    setStatus('connected');
+    if(window.cue) cue('ready');
+  };
   ws.onclose = () => { setStatus('disconnected'); setTimeout(connect, 3000); };
   ws.onerror = () => setStatus('disconnected');
-  ws.onmessage = (e) => handleMessage(JSON.parse(e.data));
+  ws.onmessage = (e) => {
+    const message = JSON.parse(e.data);
+    if (message.type === 'auth_result') {
+      if (message.protocol === 1 && message.ok === true) {
+        setStatus('connected');
+        if(window.cue) cue('ready');
+      }
+      return;
+    }
+    handleMessage(message);
+  };
 }
 
 function setStatus(s) {
+  connectionStatus = s;
   const dot = document.getElementById('statusDot');
   const label = document.getElementById('connLabel');
-  dot.style.background = s==='connected'?'var(--green)':s==='connecting'?'var(--orange)':'var(--red)';
-  label.textContent = s==='connected'?'live':s==='connecting'?'connecting…':'offline';
-  label.style.color = s==='connected'?'var(--green)':s==='connecting'?'var(--orange)':'var(--red)';
+  const pending = s === 'connecting' || s === 'authenticating';
+  dot.style.background = s==='connected'?'var(--green)':pending?'var(--orange)':'var(--red)';
+  label.textContent = s==='connected'?'live':s==='authenticating'?'authenticating…':s==='connecting'?'connecting…':'offline';
+  label.style.color = s==='connected'?'var(--green)':pending?'var(--orange)':'var(--red)';
 }
 
 function showSetup() {
@@ -539,9 +553,11 @@ function showSetup() {
   </div>`;
 }
 function tryDemo() {
+  relayToken = '';
   localStorage.setItem('herdr_relay_url', 'wss://herdr-remote-demo.yyrzrh5wfg.workers.dev');
-  localStorage.removeItem('herdr_relay_token');
+  HerdrSecurity.clearLegacyRelayToken(localStorage);
   document.getElementById('relayUrl').value = 'wss://herdr-remote-demo.yyrzrh5wfg.workers.dev';
+  document.getElementById('relayToken').value = '';
   connect();
 }
 

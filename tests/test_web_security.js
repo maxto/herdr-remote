@@ -28,3 +28,21 @@ const alreadySafeSessions = security.sanitizeSavedSessions(
   '[{"name":"Main","url":"wss://relay.example"}]'
 );
 assert.equal(alreadySafeSessions.changed, false);
+
+const authenticatedConnection = security.createAuthenticatedConnection(
+  'wss://relay.example/socket',
+  'real-secret'
+);
+assert.deepEqual(authenticatedConnection, {
+  url: 'wss://relay.example/socket',
+  authMessage: { type: 'auth', protocol: 1, token: 'real-secret' },
+});
+assert.equal(authenticatedConnection.url.includes('real-secret'), false);
+
+const removedKeys = [];
+security.clearLegacyRelayToken({
+  removeItem(key) {
+    removedKeys.push(key);
+  },
+});
+assert.deepEqual(removedKeys, ['herdr_relay_token']);

@@ -36,5 +36,21 @@
     return { changed, sessions: sanitized };
   }
 
-  return { sanitizeSavedSessions, stripTokenFromUrl };
+  function createAuthenticatedConnection(url, token) {
+    return {
+      url,
+      authMessage: { type: 'auth', protocol: 1, token },
+    };
+  }
+
+  function clearLegacyRelayToken(storage) {
+    storage.removeItem('herdr_relay_token');
+  }
+
+  return {
+    clearLegacyRelayToken,
+    createAuthenticatedConnection,
+    sanitizeSavedSessions,
+    stripTokenFromUrl,
+  };
 }));
