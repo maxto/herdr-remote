@@ -371,10 +371,20 @@ const autoRelayUrl = (location.protocol === 'https:' ? 'wss://' : 'ws://') + loc
 const DEMO_RELAY = 'wss://herdr-remote-demo.yyrzrh5wfg.workers.dev';
 const isDemo = location.hostname.includes('herdr-demo.pages.dev');
 const isSelfRelay = !isDemo && !location.hostname.includes('pages.dev') && !location.hostname.includes('localhost');
-const savedUrl = localStorage.getItem('herdr_relay_url') || (isSelfRelay ? autoRelayUrl : (isDemo ? DEMO_RELAY : ''));
+function relayUrlFromStorage() {
+  const storedUrl = localStorage.getItem('herdr_relay_url');
+  const url = storedUrl || (isSelfRelay ? autoRelayUrl : (isDemo ? DEMO_RELAY : ''));
+  const sanitized = HerdrSecurity.sanitizeRelayUrl(url);
+  if (storedUrl && sanitized.changed) localStorage.setItem('herdr_relay_url', sanitized.url);
+  return sanitized.url;
+}
+
+const savedUrl = relayUrlFromStorage();
 const cleanedPageUrl = HerdrSecurity.stripTokenFromUrl(location.href);
 if (cleanedPageUrl.changed) history.replaceState(history.state, '', cleanedPageUrl.relativeUrl);
 HerdrSecurity.clearLegacyRelayToken(localStorage);
+const savedSessions = HerdrSecurity.sanitizeSavedSessions(localStorage.getItem('herdr_sessions'));
+if (savedSessions.changed) saveSessions(savedSessions.sessions);
 let relayToken = '';
 document.getElementById('relayUrl').value = savedUrl;
 document.getElementById('relayToken').value = '';
@@ -415,9 +425,12 @@ function renderTimeline() {
 }
 
 function saveAndConnect() {
-  const url = document.getElementById('relayUrl').value.trim();
+  const url = HerdrSecurity.sanitizeRelayUrl(
+    document.getElementById('relayUrl').value.trim()
+  ).url;
   if (!url) return;
   localStorage.setItem('herdr_relay_url', url);
+  document.getElementById('relayUrl').value = url;
   relayToken = document.getElementById('relayToken').value.trim();
   document.getElementById('relayToken').value = '';
   connect();
@@ -436,7 +449,9 @@ function saveSessions(sessions) {
 }
 
 function saveCurrentSession() {
-  const url = document.getElementById('relayUrl').value.trim();
+  const url = HerdrSecurity.sanitizeRelayUrl(
+    document.getElementById('relayUrl').value.trim()
+  ).url;
   if (!url) { alert('Enter a relay URL first'); return; }
   const name = prompt('Session name:', new URL(url).hostname || 'Session');
   if (!name) return;
@@ -461,7 +476,7 @@ function switchSession(idx) {
   document.getElementById('relayToken').value = '';
   localStorage.setItem('herdr_relay_url', s.url);
   HerdrSecurity.clearLegacyRelayToken(localStorage);
-  if (ws) ws.close();
+  connectionController.disconnect();
   setStatus('disconnected');
   document.getElementById('settingsView').style.display = 'block';
   document.getElementById('agentListView').style.display = 'none';
@@ -487,7 +502,7 @@ function renderSessions() {
     el.innerHTML = '<div style="font-size:0.75rem;color:var(--muted)">No saved sessions</div>';
     return;
   }
-  const currentUrl = localStorage.getItem('herdr_relay_url') || '';
+  const currentUrl = relayUrlFromStorage();
   el.innerHTML = sessions.map((s, i) => `
     <div class="session-item${s.url === currentUrl ? ' active' : ''}" onclick="switchSession(${i})">
       <span class="session-name">${s.name}</span>
@@ -499,34 +514,10 @@ function renderSessions() {
 
 // Connection
 function connect() {
-  const url = localStorage.getItem('herdr_relay_url') || (isSelfRelay ? autoRelayUrl : (isDemo ? DEMO_RELAY : ''));
+  const url = relayUrlFromStorage();
   if (!url) { showSetup(); return; }
-  if (ws) ws.close();
-  setStatus('connecting');
   const connection = HerdrSecurity.createAuthenticatedConnection(url, relayToken);
-  ws = new WebSocket(connection.url);
-  ws.onopen = () => {
-    if (relayToken) {
-      setStatus('authenticating');
-      ws.send(JSON.stringify(connection.authMessage));
-      return;
-    }
-    setStatus('connected');
-    if(window.cue) cue('ready');
-  };
-  ws.onclose = () => { setStatus('disconnected'); setTimeout(connect, 3000); };
-  ws.onerror = () => setStatus('disconnected');
-  ws.onmessage = (e) => {
-    const message = JSON.parse(e.data);
-    if (message.type === 'auth_result') {
-      if (message.protocol === 1 && message.ok === true) {
-        setStatus('connected');
-        if(window.cue) cue('ready');
-      }
-      return;
-    }
-    handleMessage(message);
-  };
+  connectionController.connect(connection, connect);
 }
 
 function setStatus(s) {
@@ -560,6 +551,16 @@ function tryDemo() {
   document.getElementById('relayToken').value = '';
   connect();
 }
+
+const connectionController = HerdrSecurity.createConnectionController({
+  cancelReconnect: clearTimeout,
+  onAuthenticated: () => { if(window.cue) cue('ready'); },
+  onMessage: handleMessage,
+  onSocketChange: socket => { ws = socket; },
+  onStatus: setStatus,
+  openSocket: url => new WebSocket(url),
+  scheduleReconnect: callback => setTimeout(callback, 3000),
+});
 
 const ANSI_COLORS = ['#000000','#cd3131','#0dbc79','#e5e510','#2472c8','#bc3fbc','#11a8cd','#e5e5e5','#666666','#f14c4c','#23d18b','#f5f543','#3b8eea','#d670d6','#29b8db','#ffffff'];
 
@@ -1483,7 +1484,7 @@ async function togglePush() {
   } else {
     // Subscribe
     try {
-      const relayUrl = localStorage.getItem('herdr_relay_url') || '';
+      const relayUrl = relayUrlFromStorage();
       const httpUrl = relayUrl.replace('wss://', 'https://').replace('ws://', 'http://');
       const resp = await fetch(httpUrl + '/api/vapid-public-key');
       const {publicKey} = await resp.json();
