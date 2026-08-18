@@ -272,6 +272,39 @@ HERDR_RELAY_TRUSTED_ORIGINS=https://herdr-remote-bfd.pages.dev \
 assert_contains "$TRUSTED_ORIGIN_HOME/.config/herdr-remote/config.env" 'HERDR_RELAY_TRUSTED_ORIGINS=https://herdr-remote-bfd.pages.dev'
 assert_not_contains "$TRUSTED_ORIGIN_HOME/.config/herdr-remote/secrets.env" 'HERDR_RELAY_TRUSTED_ORIGINS='
 
+MULTI_ORIGIN_HOME="$TMP/multi-origin-home"
+MULTI_ORIGINS='https://one.example, https://two.example'
+HERDR_RELAY_TRUSTED_ORIGINS="$MULTI_ORIGINS" \
+    run_install macos "$MULTI_ORIGIN_HOME" 'ynn' > "$TMP/multi-origin-first.log" || {
+    cat "$TMP/multi-origin-first.log"
+    exit 1
+}
+run_install macos "$MULTI_ORIGIN_HOME" 'nn' > "$TMP/multi-origin-second.log" || {
+    cat "$TMP/multi-origin-second.log"
+    exit 1
+}
+bash -c 'source "$1"; [ "$HERDR_RELAY_TRUSTED_ORIGINS" = "$2" ]' _ \
+    "$MULTI_ORIGIN_HOME/.config/herdr-remote/config.env" "$MULTI_ORIGINS"
+
+INJECTION_ORIGIN_HOME="$TMP/injection-origin-home"
+INJECTION_MARKER="$TMP/trusted-origin-injected"
+INJECTION_ORIGINS='https://one.example,$(touch '"$INJECTION_MARKER"')'
+HERDR_RELAY_TRUSTED_ORIGINS="$INJECTION_ORIGINS" \
+    run_install macos "$INJECTION_ORIGIN_HOME" 'ynn' > "$TMP/injection-origin-first.log" || {
+    cat "$TMP/injection-origin-first.log"
+    exit 1
+}
+run_install macos "$INJECTION_ORIGIN_HOME" 'nn' > "$TMP/injection-origin-second.log" || {
+    cat "$TMP/injection-origin-second.log"
+    exit 1
+}
+[ ! -e "$INJECTION_MARKER" ] || {
+    echo "trusted origin value was executed while reloading config" >&2
+    exit 1
+}
+bash -c 'source "$1"; [ "$HERDR_RELAY_TRUSTED_ORIGINS" = "$2" ]' _ \
+    "$INJECTION_ORIGIN_HOME/.config/herdr-remote/config.env" "$INJECTION_ORIGINS"
+
 run_install macos "$MAC_HOME" 'yyyyn' > "$TMP/mac-retain.log" || {
     cat "$TMP/mac-retain.log"
     exit 1

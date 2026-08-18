@@ -72,7 +72,7 @@ URL or relay URL. For protected HTTP requests, use
 
 **Telegram:** send `/start` for a clickable dashboard of every running agent. Select an agent, then reply to the generated output prompt. Finished and blocked notifications also provide **Open output & reply**, and larger herds include Previous and Next buttons.
 
-**Web app** (phone): open [herdr-remote.pages.dev](https://herdr-remote.pages.dev), tap ⚙, and paste the tunnel URL.
+**Web app** (phone): open [herdr-remote-bfd.pages.dev](https://herdr-remote-bfd.pages.dev), tap ⚙, then enter the clean tunnel relay URL and browser token separately.
 
 **Menu bar app** (macOS): download from [Releases](https://github.com/dcolinmorgan/herdr-remote/releases).
 
