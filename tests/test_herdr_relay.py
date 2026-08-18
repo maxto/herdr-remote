@@ -195,6 +195,38 @@ class RelayAuthenticationTests(unittest.TestCase):
                 self.assertEqual(ws.sent, [])
                 snapshot.assert_not_awaited()
 
+    def test_websocket_authentication_rejects_invalid_utf8_binary_input(self):
+        with loaded_relay(
+            relay_token="correct-secret", trusted_origins=self.ORIGIN
+        ) as relay:
+            ws = _FakeWebSocket([b"\xff"], headers={"Origin": self.ORIGIN})
+            with mock.patch.object(relay, "send_current_snapshot", new=mock.AsyncMock()) as snapshot:
+                try:
+                    asyncio.run(relay.handle_client(ws))
+                except Exception as exc:
+                    self.fail(f"authentication error escaped: {exc!r}")
+
+        self.assertEqual(getattr(ws, "closed", None), (1008, "Unauthorized"))
+        self.assertEqual(ws.sent, [])
+        snapshot.assert_not_awaited()
+
+    def test_websocket_authentication_rejects_non_ascii_token_input(self):
+        with loaded_relay(
+            relay_token="correct-secret", trusted_origins=self.ORIGIN
+        ) as relay:
+            ws = _FakeWebSocket([
+                json.dumps({"type": "auth", "protocol": 1, "token": "incorrect-é"})
+            ], headers={"Origin": self.ORIGIN})
+            with mock.patch.object(relay, "send_current_snapshot", new=mock.AsyncMock()) as snapshot:
+                try:
+                    asyncio.run(relay.handle_client(ws))
+                except Exception as exc:
+                    self.fail(f"authentication error escaped: {exc!r}")
+
+        self.assertEqual(getattr(ws, "closed", None), (1008, "Unauthorized"))
+        self.assertEqual(ws.sent, [])
+        snapshot.assert_not_awaited()
+
     def test_websocket_upgrade_accepts_only_configured_browser_origins(self):
         with loaded_relay(
             relay_token="correct-secret", trusted_origins=f" {self.ORIGIN}/ "

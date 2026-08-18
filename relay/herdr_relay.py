@@ -1033,15 +1033,24 @@ async def authenticate_client(ws) -> bool:
         return True
     try:
         raw = await asyncio.wait_for(ws.recv(), timeout=AUTH_TIMEOUT_SECONDS)
-        message = json.loads(raw)
+        message = json.loads(raw) if isinstance(raw, str) else None
         valid = (
             isinstance(message, dict)
             and message.get("type") == "auth"
             and message.get("protocol") == AUTH_PROTOCOL
             and isinstance(message.get("token"), str)
-            and hmac.compare_digest(message["token"], AUTH_TOKEN)
+            and hmac.compare_digest(
+                message["token"].encode("utf-8"), AUTH_TOKEN.encode("utf-8")
+            )
         )
-    except (asyncio.TimeoutError, json.JSONDecodeError, ConnectionClosedError, ConnectionClosedOK):
+    except (
+        asyncio.TimeoutError,
+        ConnectionClosedError,
+        ConnectionClosedOK,
+        json.JSONDecodeError,
+        UnicodeError,
+        TypeError,
+    ):
         valid = False
     if not valid:
         await ws.close(code=1008, reason="Unauthorized")
