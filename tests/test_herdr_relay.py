@@ -24,6 +24,19 @@ class _ConnectionClosed(Exception):
     pass
 
 
+class _Headers(dict):
+    def raw_items(self):
+        return self.items()
+
+
+class _Response:
+    def __init__(self, status_code, reason_phrase, headers, body):
+        self.status_code = status_code
+        self.reason_phrase = reason_phrase
+        self.headers = headers
+        self.body = body
+
+
 def _websockets_stubs():
     websockets = types.ModuleType("websockets")
     websockets.__path__ = []
@@ -34,11 +47,17 @@ def _websockets_stubs():
     exceptions = types.ModuleType("websockets.exceptions")
     exceptions.ConnectionClosedError = _ConnectionClosed
     exceptions.ConnectionClosedOK = _ConnectionClosed
+    http11 = types.ModuleType("websockets.http11")
+    http11.Response = _Response
+    datastructures = types.ModuleType("websockets.datastructures")
+    datastructures.Headers = _Headers
     return {
         "websockets": websockets,
         "websockets.asyncio": websockets_asyncio,
         "websockets.asyncio.server": websockets_server,
         "websockets.exceptions": exceptions,
+        "websockets.http11": http11,
+        "websockets.datastructures": datastructures,
     }
 
 
@@ -125,8 +144,110 @@ class _FakeWebSocket:
         except StopIteration:
             raise StopAsyncIteration
 
+    async def recv(self):
+        return next(self._messages)
+
     async def send(self, message):
         self.sent.append(message)
+
+    async def close(self, code, reason):
+        self.closed = (code, reason)
+
+
+class _TimeoutWebSocket(_FakeWebSocket):
+    async def recv(self):
+        raise asyncio.TimeoutError
+
+
+class RelayAuthenticationTests(unittest.TestCase):
+    ORIGIN = "https://dashboard.example"
+
+    def test_websocket_authentication_precedes_snapshot_and_acknowledges_protocol(self):
+        with loaded_relay(
+            relay_token="correct-secret", trusted_origins=self.ORIGIN
+        ) as relay:
+            ws = _FakeWebSocket([
+                json.dumps({"type": "auth", "protocol": 1, "token": "correct-secret"})
+            ], headers={"Origin": self.ORIGIN})
+            with mock.patch.object(relay, "send_current_snapshot", new=mock.AsyncMock()) as snapshot:
+                asyncio.run(relay.handle_client(ws))
+
+        self.assertEqual(
+            ws.sent,
+            [json.dumps({"type": "auth_result", "protocol": 1, "ok": True})],
+        )
+        snapshot.assert_awaited_once_with(ws)
+
+    def test_websocket_authentication_rejects_malformed_wrong_protocol_and_wrong_token(self):
+        for bad_message in (
+            "not-json",
+            json.dumps({"type": "auth", "protocol": 2, "token": "correct-secret"}),
+            json.dumps({"type": "auth", "protocol": 1, "token": "wrong-secret"}),
+        ):
+            with self.subTest(bad_message=bad_message), loaded_relay(
+                relay_token="correct-secret", trusted_origins=self.ORIGIN
+            ) as relay:
+                ws = _FakeWebSocket([bad_message], headers={"Origin": self.ORIGIN})
+                with mock.patch.object(relay, "send_current_snapshot", new=mock.AsyncMock()) as snapshot:
+                    asyncio.run(relay.handle_client(ws))
+
+                self.assertEqual(getattr(ws, "closed", None), (1008, "Unauthorized"))
+                self.assertEqual(ws.sent, [])
+                snapshot.assert_not_awaited()
+
+    def test_websocket_upgrade_accepts_only_configured_browser_origins(self):
+        with loaded_relay(
+            relay_token="correct-secret", trusted_origins=f" {self.ORIGIN}/ "
+        ) as relay:
+            accepted = types.SimpleNamespace(
+                path="/",
+                headers=_Headers({"Upgrade": "websocket", "Origin": f"{self.ORIGIN}/"}),
+            )
+            rejected = types.SimpleNamespace(
+                path="/",
+                headers=_Headers({"Upgrade": "websocket", "Origin": "https://attacker.example"}),
+            )
+
+            self.assertIsNone(asyncio.run(relay.process_request(None, accepted)))
+            response = asyncio.run(relay.process_request(None, rejected))
+
+        self.assertEqual(response.status_code, 403)
+        self.assertEqual(response.body, b"Origin not allowed\n")
+
+    def test_authentication_timeout_closes_without_snapshot(self):
+        with loaded_relay(
+            relay_token="correct-secret", trusted_origins=self.ORIGIN
+        ) as relay:
+            ws = _TimeoutWebSocket([], headers={"Origin": self.ORIGIN})
+            with mock.patch.object(relay, "send_current_snapshot", new=mock.AsyncMock()) as snapshot:
+                asyncio.run(relay.handle_client(ws))
+
+        self.assertEqual(getattr(ws, "closed", None), (1008, "Unauthorized"))
+        self.assertEqual(ws.sent, [])
+        snapshot.assert_not_awaited()
+
+    def test_no_token_preserves_local_snapshot_behavior(self):
+        with loaded_relay() as relay:
+            ws = _FakeWebSocket([])
+            with mock.patch.object(relay, "send_current_snapshot", new=mock.AsyncMock()) as snapshot:
+                asyncio.run(relay.handle_client(ws))
+
+        snapshot.assert_awaited_once_with(ws)
+        self.assertEqual(ws.sent, [])
+
+    def test_http_bearer_authentication_is_preserved(self):
+        with loaded_relay(relay_token="correct-secret") as relay:
+            accepted = types.SimpleNamespace(
+                path="/private",
+                headers=_Headers({"Authorization": "Bearer correct-secret"}),
+            )
+            rejected = types.SimpleNamespace(
+                path="/private",
+                headers=_Headers({"Authorization": "Bearer wrong-secret"}),
+            )
+
+            self.assertEqual(asyncio.run(relay.process_request(None, accepted)).status_code, 404)
+            self.assertEqual(asyncio.run(relay.process_request(None, rejected)).status_code, 401)
 
 
 class RelayConfigurationTests(unittest.TestCase):

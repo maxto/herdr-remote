@@ -4,7 +4,7 @@
 # dependencies = ["websockets>=14.0", "zeroconf>=0.80.0", "pywebpush>=2.0.0", "py-vapid>=1.9.0"]
 # ///
 """herdr-remote relay — polls herdr, accepts push events (HTTP POST + WebSocket + UDP), broadcasts to clients."""
-import asyncio, hashlib, json, logging, os, re, shutil, signal, socket, subprocess, threading, time, typing
+import asyncio, hashlib, hmac, json, logging, os, re, shutil, signal, socket, subprocess, threading, time, typing
 
 try:
     from websockets.asyncio.server import serve
@@ -65,6 +65,20 @@ WS_PORT = int(os.environ.get("HERDR_RELAY_PORT", "8375"))
 RELAY_HOST = os.environ.get("HERDR_RELAY_HOST", "127.0.0.1")
 POLL_INTERVAL = 2
 AUTH_TOKEN = os.environ.get("HERDR_RELAY_TOKEN", "")  # Optional: shared secret for relay auth
+AUTH_PROTOCOL = 1
+AUTH_TIMEOUT_SECONDS = 5
+TRUSTED_ORIGINS = {
+    origin.strip().rstrip("/")
+    for origin in os.environ.get("HERDR_RELAY_TRUSTED_ORIGINS", "").split(",")
+    if origin.strip()
+}
+
+if AUTH_TOKEN and not TRUSTED_ORIGINS:
+    log.warning("Relay token is enabled without trusted browser origins")
+
+
+def origin_is_allowed(origin: str) -> bool:
+    return not origin or not TRUSTED_ORIGINS or origin.rstrip("/") in TRUSTED_ORIGINS
 
 # VAPID Web Push
 VAPID_PUBLIC_KEY = os.environ.get("HERDR_VAPID_PUBLIC", "")
@@ -887,6 +901,19 @@ async def process_request(connection, request):
     }
     request_path = (request.path or "/").split("?", 1)[0]
 
+    upgrade = None
+    origin = ""
+    for key, value in request.headers.raw_items():
+        if key.lower() == "upgrade":
+            upgrade = value.lower()
+        elif key.lower() == "origin":
+            origin = value
+    if upgrade == "websocket":
+        if not origin_is_allowed(origin):
+            headers = Headers([("Content-Type", "text/plain")])
+            return Response(403, "Forbidden", headers, b"Origin not allowed\n")
+        return None
+
     # Token auth (if configured)
     if AUTH_TOKEN and request_path not in public_paths:
         token = None
@@ -902,14 +929,6 @@ async def process_request(connection, request):
         if token != AUTH_TOKEN:
             headers = Headers([("Content-Type", "text/plain")])
             return Response(401, "Unauthorized", headers, b"Invalid token\n")
-
-    # Check if this is a WebSocket upgrade
-    upgrade = None
-    for key, value in request.headers.raw_items():
-        if key.lower() == "upgrade":
-            upgrade = value.lower()
-    if upgrade == "websocket":
-        return None  # proceed with WebSocket handshake
 
     # For CORS preflight
     if request.path and "OPTIONS" in str(request.headers):
@@ -1009,7 +1028,32 @@ async def process_request(connection, request):
     return Response(404, "Not Found", headers, b"not found\n")
 
 
+async def authenticate_client(ws) -> bool:
+    if not AUTH_TOKEN:
+        return True
+    try:
+        raw = await asyncio.wait_for(ws.recv(), timeout=AUTH_TIMEOUT_SECONDS)
+        message = json.loads(raw)
+        valid = (
+            isinstance(message, dict)
+            and message.get("type") == "auth"
+            and message.get("protocol") == AUTH_PROTOCOL
+            and isinstance(message.get("token"), str)
+            and hmac.compare_digest(message["token"], AUTH_TOKEN)
+        )
+    except (asyncio.TimeoutError, json.JSONDecodeError, ConnectionClosedError, ConnectionClosedOK):
+        valid = False
+    if not valid:
+        await ws.close(code=1008, reason="Unauthorized")
+        return False
+    await ws.send(json.dumps({"type": "auth_result", "protocol": AUTH_PROTOCOL, "ok": True}))
+    return True
+
+
 async def handle_client(ws):
+    if not await authenticate_client(ws):
+        return
+
     remote_addr = ws.remote_address
     ip = remote_addr[0] if remote_addr else "unknown"
     ua = ws.request.headers.get("User-Agent", "unknown") if ws.request else "unknown"
