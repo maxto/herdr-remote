@@ -19,6 +19,7 @@ sys.path.insert(0, str(ROOT / "relay"))
 os.environ.setdefault("HERDR_TG_TOKEN", "test-token")
 
 tg = importlib.import_module("herdr_telegram")
+from ws_auth import RelayAuthenticationError
 
 
 def make_agents(count, *, status="idle", project="project"):
@@ -99,6 +100,43 @@ class FakeRelayConnection:
             if False:
                 yield None
         return empty_messages()
+
+
+class TelegramAuthenticationTests(unittest.IsolatedAsyncioTestCase):
+    async def test_send_to_relay_authenticates_before_sending_command(self):
+        connection = FakeRelayConnection([
+            {"type": "auth_result", "protocol": 1, "ok": True},
+            {"type": "command_result", "command": "respond", "ok": True},
+        ])
+        old_url, old_token = tg.RELAY_WS, tg.RELAY_TOKEN
+        tg.RELAY_WS, tg.RELAY_TOKEN = "ws://127.0.0.1:8375", "relay-secret"
+        try:
+            with patch("websockets.connect", return_value=connection):
+                await tg.send_to_relay("w1:p1", "yes", prompt_id="prompt-1")
+        finally:
+            tg.RELAY_WS, tg.RELAY_TOKEN = old_url, old_token
+
+        self.assertEqual(connection.sent[0], {
+            "type": "auth", "protocol": 1, "token": "relay-secret",
+        })
+        self.assertEqual(connection.sent[1]["type"], "respond")
+
+    async def test_send_to_relay_stops_when_authentication_is_rejected(self):
+        connection = FakeRelayConnection([
+            {"type": "auth_result", "protocol": 1, "ok": False},
+        ])
+        old_url, old_token = tg.RELAY_WS, tg.RELAY_TOKEN
+        tg.RELAY_WS, tg.RELAY_TOKEN = "ws://127.0.0.1:8375", "relay-secret"
+        try:
+            with patch("websockets.connect", return_value=connection):
+                with self.assertRaises(RelayAuthenticationError):
+                    await tg.send_to_relay("w1:p1", "yes", prompt_id="prompt-1")
+        finally:
+            tg.RELAY_WS, tg.RELAY_TOKEN = old_url, old_token
+
+        self.assertEqual(connection.sent, [{
+            "type": "auth", "protocol": 1, "token": "relay-secret",
+        }])
 
 
 def make_update(chat_id=42, chat_type="private", callback=None, message=None):

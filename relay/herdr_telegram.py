@@ -11,6 +11,7 @@ from telegram import ForceReply, Update, InlineKeyboardButton, InlineKeyboardMar
 from telegram.ext import Application, CallbackQueryHandler, CommandHandler, MessageHandler, ContextTypes, filters
 
 from agent_state import apply_agent_message
+from ws_auth import authenticated_connection, normalize_relay_credentials
 
 logging.basicConfig(level=logging.INFO)
 # httpx logs every request URL at INFO; that URL contains the bot token. Silence it.
@@ -19,9 +20,11 @@ log = logging.getLogger("herdr-tg")
 
 TOKEN = os.environ.get("HERDR_TG_TOKEN", "")
 CHAT_ID = os.environ.get("HERDR_TG_CHAT_ID", "")
-RELAY_WS = os.environ.get("HERDR_RELAY", "ws://127.0.0.1:8375")
-RELAY_WS_SAFE = RELAY_WS.split("?", 1)[0]  # token-free variant for display and logging; never leak the token
-_RELAY_TOKEN = RELAY_WS.split("token=", 1)[1] if "token=" in RELAY_WS else ""
+RELAY_WS, RELAY_TOKEN = normalize_relay_credentials(
+    os.environ.get("HERDR_RELAY", "ws://127.0.0.1:8375"),
+    os.environ.get("HERDR_RELAY_TOKEN", ""),
+)
+RELAY_WS_SAFE = RELAY_WS
 
 
 def scrub(value) -> str:
@@ -31,7 +34,7 @@ def scrub(value) -> str:
     ?token= query, so raw exception text must never be surfaced unredacted.
     """
     s = str(value)
-    for secret in (_RELAY_TOKEN, TOKEN):
+    for secret in (RELAY_TOKEN, TOKEN):
         if secret:
             s = s.replace(secret, "<redacted>")
     return s
@@ -80,7 +83,7 @@ async def await_command_result(ws, request_id: str, command: str):
             raise RuntimeError(f"relay did not acknowledge {command}") from exc
         response = json.loads(raw)
         response_request_id = response.get("request_id")
-        if response.get("type") == "command_result" and response_request_id != request_id:
+        if response.get("type") == "command_result" and response_request_id not in (None, request_id):
             continue
         if response_request_id not in (None, request_id):
             continue
@@ -94,8 +97,7 @@ async def await_command_result(ws, request_id: str, command: str):
 
 async def send_to_relay(pane_id: str, text: str, prompt_id: str | None = None):
     """Send a response to the relay via WebSocket."""
-    import websockets
-    async with websockets.connect(RELAY_WS) as ws:
+    async with authenticated_connection(RELAY_WS, RELAY_TOKEN) as ws:
         request_id = secrets.token_hex(8)
         await ws.send(json.dumps({
             "type": "respond",
@@ -109,8 +111,7 @@ async def send_to_relay(pane_id: str, text: str, prompt_id: str | None = None):
 
 async def send_keys_to_relay(pane_id: str, keys: list[str], prompt_id: str | None = None):
     """Send raw key presses to the relay via WebSocket (e.g. ["1"] to pick a prompt option)."""
-    import websockets
-    async with websockets.connect(RELAY_WS) as ws:
+    async with authenticated_connection(RELAY_WS, RELAY_TOKEN) as ws:
         request_id = secrets.token_hex(8)
         message = {
             "type": "send_keys",
@@ -126,9 +127,8 @@ async def send_keys_to_relay(pane_id: str, keys: list[str], prompt_id: str | Non
 
 async def read_pane(pane_id: str, lines: int = 15) -> str:
     """Read pane content from relay."""
-    import websockets
     try:
-        async with websockets.connect(RELAY_WS) as ws:
+        async with authenticated_connection(RELAY_WS, RELAY_TOKEN) as ws:
             await ws.send(json.dumps({"type": "read_pane", "pane_id": pane_id, "lines": lines}))
             raw = await asyncio.wait_for(ws.recv(), timeout=5)
             msg = json.loads(raw)
@@ -147,8 +147,7 @@ async def send_text_to_relay(pane_id: str, text: str):
     """Send text to an agent using 'herdr agent prompt' for proper submission."""
     if not text or len(text) > 10000:
         raise ValueError("text must contain 1-10000 characters")
-    import websockets
-    async with websockets.connect(RELAY_WS) as ws:
+    async with authenticated_connection(RELAY_WS, RELAY_TOKEN) as ws:
         request_id = secrets.token_hex(8)
         await ws.send(json.dumps({
             "type": "agent_prompt",
@@ -955,12 +954,11 @@ async def track_agent_updates(app: Application, updated_agents: list[dict]):
 
 async def relay_listener(app: Application):
     """Persistent WebSocket connection to relay."""
-    import websockets
     global agents, relay_connected, prev_statuses
 
     while True:
         try:
-            async with websockets.connect(RELAY_WS) as ws:
+            async with authenticated_connection(RELAY_WS, RELAY_TOKEN) as ws:
                 relay_connected = True
                 log.info(f"Connected to relay at {RELAY_WS_SAFE}")
                 async for raw in ws:
@@ -993,7 +991,7 @@ async def relay_listener(app: Application):
                 clear_relay_connection_state()
         except Exception as e:
             clear_relay_connection_state()
-            log.warning(f"Relay connection lost: {e}, reconnecting in 5s...")
+            log.warning("Relay connection lost: %s, reconnecting in 5s...", scrub(e))
             await asyncio.sleep(5)
 
 

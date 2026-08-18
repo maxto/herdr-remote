@@ -14,8 +14,12 @@ from textual.message import Message
 from textual import work
 
 from agent_state import apply_agent_message
+from ws_auth import authenticated_connection, normalize_relay_credentials
 
-RELAY_WS = os.environ.get("HERDR_RELAY", "ws://127.0.0.1:8375")
+RELAY_WS, RELAY_TOKEN = normalize_relay_credentials(
+    os.environ.get("HERDR_RELAY", "ws://127.0.0.1:8375"),
+    os.environ.get("HERDR_RELAY_TOKEN", ""),
+)
 
 
 class AgentCard(Static):
@@ -169,10 +173,9 @@ class HerdrRemoteTUI(App):
 
     @work(exclusive=True, thread=False)
     async def connect_relay(self) -> None:
-        import websockets
         while True:
             try:
-                async with websockets.connect(RELAY_WS) as ws:
+                async with authenticated_connection(RELAY_WS, RELAY_TOKEN) as ws:
                     self._ws = ws
                     self.connected = True
                     self.mutate_reactive(HerdrRemoteTUI.connected)
