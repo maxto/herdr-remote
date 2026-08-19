@@ -389,7 +389,9 @@ const savedSessions = HerdrSecurity.sanitizeSavedSessions(localStorage.getItem('
 if (savedSessions.changed) saveSessions(savedSessions.sessions);
 let relayToken = '';
 document.getElementById('relayUrl').value = savedUrl;
-document.getElementById('relayToken').value = '';
+// The token field is left as the browser found it: blank on a cold load, or
+// filled by the platform password manager. Blanking it here would undo the
+// manager's autofill. The page itself still never persists the token.
 
 
 
