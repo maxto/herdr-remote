@@ -36,3 +36,54 @@ class WebAssetsTest(unittest.TestCase):
             any("https://esm.sh/cuelume@0.1.2" in source for source in executable_sources),
             executable_sources,
         )
+
+
+class CredentialFieldCollector(HTMLParser):
+    """Collects the relay credential inputs and whether a form encloses them."""
+
+    def __init__(self):
+        super().__init__()
+        self.inputs = {}
+        self._form_depth = 0
+
+    def handle_starttag(self, tag, attrs):
+        if tag == "form":
+            self._form_depth += 1
+        elif tag == "input":
+            attributes = dict(attrs)
+            name = attributes.get("id")
+            if name in {"relayUrl", "relayToken"}:
+                self.inputs[name] = {
+                    "attrs": attributes,
+                    "in_form": self._form_depth > 0,
+                }
+
+    def handle_endtag(self, tag):
+        if tag == "form" and self._form_depth > 0:
+            self._form_depth -= 1
+
+
+class CredentialAutofillTest(unittest.TestCase):
+    """The browser never stores the token, so the platform password manager must.
+
+    That only happens when the two fields sit in a form and carry the
+    autocomplete roles managers look for.
+    """
+
+    def setUp(self):
+        parser = CredentialFieldCollector()
+        parser.feed((Path(__file__).parent.parent / "web" / "index.html").read_text())
+        self.inputs = parser.inputs
+
+    def test_relay_url_is_the_username_field(self):
+        field = self.inputs["relayUrl"]
+        self.assertTrue(field["in_form"], "relayUrl must sit inside a form")
+        self.assertEqual(field["attrs"].get("autocomplete"), "username")
+        self.assertTrue(field["attrs"].get("name"))
+
+    def test_relay_token_is_the_password_field(self):
+        field = self.inputs["relayToken"]
+        self.assertTrue(field["in_form"], "relayToken must sit inside a form")
+        self.assertEqual(field["attrs"].get("autocomplete"), "current-password")
+        self.assertTrue(field["attrs"].get("name"))
+        self.assertEqual(field["attrs"].get("type"), "password")

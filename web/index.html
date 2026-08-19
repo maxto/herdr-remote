@@ -180,11 +180,13 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
 <div class="settings" id="settingsView">
   <h2>Settings</h2>
   <div class="setting-group">
-    <label for="relayUrl">Relay URL</label>
-    <input id="relayUrl" type="url" placeholder="wss://your-tunnel.trycloudflare.com" />
-    <label for="relayToken" style="margin-top:8px">Token (optional)</label>
-    <input id="relayToken" type="password" placeholder="shared secret" />
-    <button onclick="saveAndConnect()">Connect</button>
+    <form id="relayCredentials" onsubmit="event.preventDefault(); saveAndConnect();">
+      <label for="relayUrl">Relay URL</label>
+      <input id="relayUrl" name="relayUrl" type="url" autocomplete="username" placeholder="wss://your-tunnel.trycloudflare.com" />
+      <label for="relayToken" style="margin-top:8px">Token (optional)</label>
+      <input id="relayToken" name="relayToken" type="password" autocomplete="current-password" placeholder="shared secret" />
+      <button type="submit">Connect</button>
+    </form>
     <div class="hint">Run <code>./relay/start.sh</code> to get a URL. <a href="https://github.com/dcolinmorgan/herdr-remote/blob/main/QUICKSTART.md" style="color:var(--blue)">Setup guide →</a></div>
   </div>
 
@@ -432,7 +434,8 @@ function saveAndConnect() {
   localStorage.setItem('herdr_relay_url', url);
   document.getElementById('relayUrl').value = url;
   relayToken = document.getElementById('relayToken').value.trim();
-  document.getElementById('relayToken').value = '';
+  // The field keeps its value so the platform password manager can offer to
+  // save it. Nothing is persisted by the page: every load clears it again.
   connect();
   toggleSettings();
 }
