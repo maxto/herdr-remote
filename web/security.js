@@ -202,49 +202,12 @@
     storage.removeItem('herdr_relay_token');
   }
 
-  // The page keeps the token only in memory, so the platform password manager
-  // is the only thing that can hand it back after a reload. Browsers without
-  // the Credential Management API fall back to typing it, never to storing it.
-  async function requestStoredCredential(environment, mediation) {
-    const credentials = environment && environment.credentials;
-    if (!credentials || typeof credentials.get !== 'function') return null;
-
-    try {
-      const credential = await credentials.get({
-        password: true,
-        mediation: mediation || 'silent',
-      });
-      if (!credential || !credential.password) return null;
-      return { url: credential.id || '', token: credential.password };
-    } catch {
-      return null;
-    }
-  }
-
-  async function storeRelayCredential(environment, url, token) {
-    if (!url || !token) return false;
-
-    const credentials = environment && environment.credentials;
-    const PasswordCredentialConstructor = environment && environment.PasswordCredential;
-    if (!credentials || typeof credentials.store !== 'function') return false;
-    if (typeof PasswordCredentialConstructor !== 'function') return false;
-
-    try {
-      await credentials.store(new PasswordCredentialConstructor({ id: url, password: token }));
-      return true;
-    } catch {
-      return false;
-    }
-  }
-
   return {
     clearLegacyRelayToken,
     createConnectionController,
     createAuthenticatedConnection,
-    requestStoredCredential,
     sanitizeSavedSessions,
     sanitizeRelayUrl,
-    storeRelayCredential,
     stripTokenFromUrl,
   };
 }));
