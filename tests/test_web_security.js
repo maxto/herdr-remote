@@ -129,3 +129,70 @@ secondSocket.onmessage({
   data: JSON.stringify({ type: 'auth_result', protocol: 1, ok: true }),
 });
 assert.equal(lifecycleHarness.statuses.at(-1), 'connected');
+
+// --- Credential Management ---------------------------------------------
+// The page stores no token, so retrieval goes through the platform manager.
+
+function fakeCredentialEnvironment({ credential, getThrows, stored } = {}) {
+  return {
+    credentials: {
+      async get() {
+        if (getThrows) throw new Error('user denied');
+        return credential || null;
+      },
+      async store(value) {
+        stored.push(value);
+      },
+    },
+    PasswordCredential: class {
+      constructor({ id, password }) {
+        this.id = id;
+        this.password = password;
+      }
+    },
+  };
+}
+
+(async () => {
+  const missing = await security.requestStoredCredential({});
+  assert.equal(missing, null, 'no credentials API means no credential');
+
+  const denied = await security.requestStoredCredential(
+    fakeCredentialEnvironment({ getThrows: true })
+  );
+  assert.equal(denied, null, 'a rejected prompt must not throw');
+
+  const empty = await security.requestStoredCredential(fakeCredentialEnvironment({}));
+  assert.equal(empty, null, 'no stored credential means null');
+
+  const found = await security.requestStoredCredential(
+    fakeCredentialEnvironment({
+      credential: { id: 'wss://relay.example', password: 'stored-secret' },
+    })
+  );
+  assert.deepEqual(found, { url: 'wss://relay.example', token: 'stored-secret' });
+
+  const stored = [];
+  const environment = fakeCredentialEnvironment({ stored });
+  assert.equal(
+    await security.storeRelayCredential(environment, 'wss://relay.example', 'secret'),
+    true
+  );
+  assert.deepEqual(
+    stored.map((entry) => ({ id: entry.id, password: entry.password })),
+    [{ id: 'wss://relay.example', password: 'secret' }]
+  );
+
+  assert.equal(
+    await security.storeRelayCredential(environment, 'wss://relay.example', ''),
+    false,
+    'an empty token is never stored'
+  );
+  assert.equal(
+    await security.storeRelayCredential({}, 'wss://relay.example', 'secret'),
+    false,
+    'an unsupported browser reports failure instead of throwing'
+  );
+
+  console.log('credential management: ok');
+})();

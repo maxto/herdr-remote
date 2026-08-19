@@ -393,6 +393,28 @@ document.getElementById('relayUrl').value = savedUrl;
 // filled by the platform password manager. Blanking it here would undo the
 // manager's autofill. The page itself still never persists the token.
 
+function credentialEnvironment() {
+  return {
+    credentials: navigator.credentials,
+    PasswordCredential: window.PasswordCredential,
+  };
+}
+
+// Ask the password manager for the token instead of relying on autofill
+// heuristics. A browser without the API simply resolves to null.
+HerdrSecurity.requestStoredCredential(credentialEnvironment()).then((credential) => {
+  if (!credential) return;
+  const tokenField = document.getElementById('relayToken');
+  if (tokenField.value) return;
+  tokenField.value = credential.token;
+  relayToken = credential.token;
+  if (credential.url && !relayUrlFromStorage()) {
+    document.getElementById('relayUrl').value = credential.url;
+    localStorage.setItem('herdr_relay_url', credential.url);
+  }
+  if (relayUrlFromStorage()) connect();
+});
+
 
 
 function toggleSettings() {
@@ -436,8 +458,9 @@ function saveAndConnect() {
   localStorage.setItem('herdr_relay_url', url);
   document.getElementById('relayUrl').value = url;
   relayToken = document.getElementById('relayToken').value.trim();
-  // The field keeps its value so the platform password manager can offer to
-  // save it. Nothing is persisted by the page: every load clears it again.
+  // Hand the pair to the platform password manager so the next load can ask
+  // for it back. The page itself still persists nothing.
+  HerdrSecurity.storeRelayCredential(credentialEnvironment(), url, relayToken);
   connect();
   toggleSettings();
 }
