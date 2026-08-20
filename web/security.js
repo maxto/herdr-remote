@@ -198,14 +198,29 @@
     };
   }
 
-  function clearLegacyRelayToken(storage) {
-    storage.removeItem('herdr_relay_token');
+  // The token is remembered for this device so the operator pastes it once.
+  // It still never travels inside a URL: the handshake carries it instead.
+  const RELAY_TOKEN_KEY = 'herdr_relay_token';
+
+  function readStoredRelayToken(storage) {
+    return storage.getItem(RELAY_TOKEN_KEY) || '';
+  }
+
+  function persistRelayToken(storage, token) {
+    if (token) storage.setItem(RELAY_TOKEN_KEY, token);
+    else storage.removeItem(RELAY_TOKEN_KEY);
+  }
+
+  function forgetStoredRelayToken(storage) {
+    storage.removeItem(RELAY_TOKEN_KEY);
   }
 
   return {
-    clearLegacyRelayToken,
     createConnectionController,
     createAuthenticatedConnection,
+    forgetStoredRelayToken,
+    persistRelayToken,
+    readStoredRelayToken,
     sanitizeSavedSessions,
     sanitizeRelayUrl,
     stripTokenFromUrl,

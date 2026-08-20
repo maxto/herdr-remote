@@ -895,7 +895,11 @@ async def process_request(connection, request):
     from websockets.http11 import Response
     from websockets.datastructures import Headers
 
+    # The dashboard shell loads before the browser holds a token, so demanding
+    # one here would force the secret into the page URL. Agent state stays
+    # behind the WebSocket gate; these files carry none of it.
     public_paths = {
+        "/", "/index.html", "/security.js",
         "/sw.js", "/logo.svg", "/api/vapid-public-key",
         "/HackNerdFont-Regular.woff2", "/HackNerdFont-LICENSE.txt",
     }
@@ -983,6 +987,19 @@ async def process_request(connection, request):
                 ("Content-Type", "application/javascript"),
                 ("Cache-Control", "no-cache"),
                 ("Service-Worker-Allowed", "/"),
+            ])
+            return Response(200, "OK", headers, body)
+
+    # Serve the security helper the dashboard loads before it can connect
+    if path == "/security.js":
+        web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
+        helper_path = os.path.join(web_dir, "security.js")
+        if os.path.isfile(helper_path):
+            with open(helper_path, "rb") as f:
+                body = f.read()
+            headers = Headers([
+                ("Content-Type", "application/javascript"),
+                ("Cache-Control", "no-cache"),
             ])
             return Response(200, "OK", headers, body)
 

@@ -384,14 +384,11 @@ function relayUrlFromStorage() {
 const savedUrl = relayUrlFromStorage();
 const cleanedPageUrl = HerdrSecurity.stripTokenFromUrl(location.href);
 if (cleanedPageUrl.changed) history.replaceState(history.state, '', cleanedPageUrl.relativeUrl);
-HerdrSecurity.clearLegacyRelayToken(localStorage);
 const savedSessions = HerdrSecurity.sanitizeSavedSessions(localStorage.getItem('herdr_sessions'));
 if (savedSessions.changed) saveSessions(savedSessions.sessions);
-let relayToken = '';
+let relayToken = HerdrSecurity.readStoredRelayToken(localStorage);
 document.getElementById('relayUrl').value = savedUrl;
-// The token field is left as the browser found it: blank on a cold load, or
-// filled by the platform password manager. Blanking it here would undo the
-// manager's autofill. The page itself still never persists the token.
+document.getElementById('relayToken').value = relayToken;
 
 
 
@@ -436,8 +433,7 @@ function saveAndConnect() {
   localStorage.setItem('herdr_relay_url', url);
   document.getElementById('relayUrl').value = url;
   relayToken = document.getElementById('relayToken').value.trim();
-  // The field keeps its value so the platform password manager can offer to
-  // save it. Nothing is persisted by the page: every load clears it again.
+  HerdrSecurity.persistRelayToken(localStorage, relayToken);
   connect();
   toggleSettings();
 }
@@ -480,7 +476,7 @@ function switchSession(idx) {
   document.getElementById('relayUrl').value = s.url;
   document.getElementById('relayToken').value = '';
   localStorage.setItem('herdr_relay_url', s.url);
-  HerdrSecurity.clearLegacyRelayToken(localStorage);
+  HerdrSecurity.forgetStoredRelayToken(localStorage);
   connectionController.disconnect();
   setStatus('disconnected');
   document.getElementById('settingsView').style.display = 'block';
@@ -551,7 +547,7 @@ function showSetup() {
 function tryDemo() {
   relayToken = '';
   localStorage.setItem('herdr_relay_url', 'wss://herdr-remote-demo.yyrzrh5wfg.workers.dev');
-  HerdrSecurity.clearLegacyRelayToken(localStorage);
+  HerdrSecurity.forgetStoredRelayToken(localStorage);
   document.getElementById('relayUrl').value = 'wss://herdr-remote-demo.yyrzrh5wfg.workers.dev';
   document.getElementById('relayToken').value = '';
   connect();
@@ -1522,6 +1518,11 @@ function urlBase64ToUint8Array(base64String) {
 }
 
 initPush();
+
+// A remembered relay and token mean the operator already answered every
+// question the settings screen asks, so open straight into the agent list.
+// This runs last: connect() needs the controller defined above.
+if (savedUrl && relayToken) connect();
 </script>
 </body>
 </html>

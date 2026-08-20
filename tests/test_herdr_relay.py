@@ -281,6 +281,27 @@ class RelayAuthenticationTests(unittest.TestCase):
             self.assertEqual(asyncio.run(relay.process_request(None, accepted)).status_code, 404)
             self.assertEqual(asyncio.run(relay.process_request(None, rejected)).status_code, 401)
 
+    def test_dashboard_assets_are_served_without_a_token(self):
+        """A browser must load the page and its script before it can authenticate.
+
+        The dashboard is a shell: every piece of agent state still arrives over
+        the token-gated WebSocket.
+        """
+        assets = (
+            ("/", "text/html"),
+            ("/index.html", "text/html"),
+            ("/security.js", "javascript"),
+            ("/HackNerdFont-Regular.woff2", "font/woff2"),
+        )
+
+        with loaded_relay(relay_token="correct-secret") as relay:
+            for path, content_type in assets:
+                request = types.SimpleNamespace(path=path, headers=_Headers({}))
+                response = asyncio.run(relay.process_request(None, request))
+
+                self.assertEqual(response.status_code, 200, path)
+                self.assertIn(content_type, response.headers["Content-Type"], path)
+
 
 class RelayConfigurationTests(unittest.TestCase):
     def test_relay_defaults_to_loopback(self):

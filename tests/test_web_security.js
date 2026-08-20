@@ -43,13 +43,33 @@ assert.deepEqual(authenticatedConnection, {
 });
 assert.equal(authenticatedConnection.url.includes('secret'), false);
 
-const removedKeys = [];
-security.clearLegacyRelayToken({
-  removeItem(key) {
-    removedKeys.push(key);
-  },
-});
-assert.deepEqual(removedKeys, ['herdr_relay_token']);
+function fakeStorage(initial = {}) {
+  const items = { ...initial };
+  return {
+    items,
+    getItem: (key) => (key in items ? items[key] : null),
+    setItem: (key, value) => { items[key] = value; },
+    removeItem: (key) => { delete items[key]; },
+  };
+}
+
+// The operator pastes the token once; it must survive a reload.
+const emptyStorage = fakeStorage();
+assert.equal(security.readStoredRelayToken(emptyStorage), '');
+
+const filledStorage = fakeStorage({ herdr_relay_token: 'remembered-secret' });
+assert.equal(security.readStoredRelayToken(filledStorage), 'remembered-secret');
+
+const writeStorage = fakeStorage();
+security.persistRelayToken(writeStorage, 'fresh-secret');
+assert.deepEqual(writeStorage.items, { herdr_relay_token: 'fresh-secret' });
+
+security.persistRelayToken(writeStorage, '');
+assert.deepEqual(writeStorage.items, {}, 'an empty token clears the stored one');
+
+security.persistRelayToken(writeStorage, 'another-secret');
+security.forgetStoredRelayToken(writeStorage);
+assert.deepEqual(writeStorage.items, {}, 'switching relays forgets the token');
 
 function createSocketHarness() {
   const sockets = [];
