@@ -108,11 +108,6 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
 .ctx-item:hover { background: var(--border); }
 .ctx-item.danger { color: var(--red); }
 .ctx-item svg { flex-shrink: 0; }
-.session-item { display: flex; align-items: center; gap: 8px; padding: 8px 10px; border-radius: 8px; cursor: pointer; margin-bottom: 4px; background: var(--bg); border: 1px solid var(--border); }
-.session-item:hover { border-color: var(--blue); }
-.session-item.active { border-color: var(--green); background: color-mix(in srgb, var(--green) 10%, var(--bg)); }
-.session-name { font-weight: 500; flex: 1; }
-.session-url { font-size: 0.7rem; color: var(--muted); font-family: monospace; }
 .term-content { flex: 1; min-width: 0; overflow: auto; padding: 10px 12px; background: var(--term-bg); font-family: 'Hack Nerd Font', 'CaskaydiaCove Nerd Font Mono', 'JetBrainsMono Nerd Font Mono', 'SFMono-Regular', Consolas, monospace; font-size: clamp(0.68rem, 2.7vw, 0.8rem); line-height: 1.35; white-space: pre; color: var(--term-text); -webkit-overflow-scrolling: touch; overscroll-behavior: contain; }
 .quick-actions { padding: 8px 12px; border-top: 1px solid var(--border); display: flex; gap: 6px; flex-wrap: wrap; flex-shrink: 0; }
 .quick-actions button { padding: 10px 14px; border-radius: 8px; border: none; font-size: 0.8rem; font-weight: 600; cursor: pointer; flex: 1; min-width: 70px; display: flex; align-items: center; justify-content: center; gap: 6px; }
@@ -188,13 +183,6 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
       <button type="submit">Connect</button>
     </form>
     <div class="hint">Served by your relay? The URL fills itself in. Otherwise paste its <code>wss://</code> address. <a href="https://github.com/maxto/herdr-remote/blob/main/docs/TAILSCALE.md" style="color:var(--blue)">Setup guide →</a></div>
-  </div>
-
-  <div class="setting-group">
-    <label>Saved Relays</label>
-    <div id="sessionList" style="margin:8px 0"></div>
-    <button onclick="saveCurrentSession()" style="font-size:0.8rem;padding:8px 12px">+ Save Current Relay</button>
-    <div class="hint">Switch between relays on different machines. Every herdr session on a relay already shows up in one agent list.</div>
   </div>
 
   <div class="setting-group">
@@ -384,8 +372,7 @@ function relayUrlFromStorage() {
 const savedUrl = relayUrlFromStorage();
 const cleanedPageUrl = HerdrSecurity.stripTokenFromUrl(location.href);
 if (cleanedPageUrl.changed) history.replaceState(history.state, '', cleanedPageUrl.relativeUrl);
-const savedSessions = HerdrSecurity.sanitizeSavedSessions(localStorage.getItem('herdr_sessions'));
-if (savedSessions.changed) saveSessions(savedSessions.sessions);
+HerdrSecurity.forgetSavedRelays(localStorage);
 let relayToken = HerdrSecurity.readStoredRelayToken(localStorage);
 document.getElementById('relayUrl').value = savedUrl;
 document.getElementById('relayToken').value = relayToken;
@@ -402,7 +389,6 @@ function toggleSettings() {
     document.getElementById('settingsStatus').innerHTML = connectionStatus === 'connected'
       ? `<span style="color:var(--green)">● Connected</span> · ${agents.length} agents`
       : `<span style="color:var(--red)">● Disconnected</span>`;
-    renderSessions();
   }
 }
 
@@ -439,80 +425,6 @@ function saveAndConnect() {
 }
 
 // Session switcher
-function getSessions() {
-  const result = HerdrSecurity.sanitizeSavedSessions(localStorage.getItem('herdr_sessions'));
-  if (result.changed) saveSessions(result.sessions);
-  return result.sessions;
-}
-
-function saveSessions(sessions) {
-  localStorage.setItem('herdr_sessions', JSON.stringify(sessions));
-}
-
-function saveCurrentSession() {
-  const url = HerdrSecurity.sanitizeRelayUrl(
-    document.getElementById('relayUrl').value.trim()
-  ).url;
-  if (!url) { alert('Enter a relay URL first'); return; }
-  const name = prompt('Session name:', new URL(url).hostname || 'Session');
-  if (!name) return;
-  const sessions = getSessions();
-  const existing = sessions.findIndex(s => s.url === url);
-  if (existing >= 0) {
-    sessions[existing].name = name;
-  } else {
-    sessions.push({ name, url });
-  }
-  saveSessions(sessions);
-  renderSessions();
-  if (window.cue) cue('success');
-}
-
-function switchSession(idx) {
-  const sessions = getSessions();
-  const s = sessions[idx];
-  if (!s) return;
-  relayToken = '';
-  document.getElementById('relayUrl').value = s.url;
-  document.getElementById('relayToken').value = '';
-  localStorage.setItem('herdr_relay_url', s.url);
-  HerdrSecurity.forgetStoredRelayToken(localStorage);
-  connectionController.disconnect();
-  setStatus('disconnected');
-  document.getElementById('settingsView').style.display = 'block';
-  document.getElementById('agentListView').style.display = 'none';
-  document.getElementById('timelineView').style.display = 'none';
-  renderSessions();
-  document.getElementById('relayToken').focus();
-}
-
-function deleteSession(idx, e) {
-  e.stopPropagation();
-  const sessions = getSessions();
-  if (confirm(`Delete "${sessions[idx]?.name}"?`)) {
-    sessions.splice(idx, 1);
-    saveSessions(sessions);
-    renderSessions();
-  }
-}
-
-function renderSessions() {
-  const sessions = getSessions();
-  const el = document.getElementById('sessionList');
-  if (!sessions.length) {
-    el.innerHTML = '<div style="font-size:0.75rem;color:var(--muted)">No saved relays</div>';
-    return;
-  }
-  const currentUrl = relayUrlFromStorage();
-  el.innerHTML = sessions.map((s, i) => `
-    <div class="session-item${s.url === currentUrl ? ' active' : ''}" onclick="switchSession(${i})">
-      <span class="session-name">${s.name}</span>
-      <span class="session-url">${new URL(s.url).hostname}</span>
-      <button onclick="deleteSession(${i}, event)" aria-label="Delete" style="background:none;border:none;color:var(--muted);cursor:pointer;padding:4px">×</button>
-    </div>
-  `).join('');
-}
-
 // Connection
 function connect() {
   const url = relayUrlFromStorage();

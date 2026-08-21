@@ -177,36 +177,6 @@
     return { connect, disconnect };
   }
 
-  function sanitizeSavedSessions(rawSessions) {
-    if (!rawSessions) return { changed: false, sessions: [] };
-
-    let sessions;
-    try {
-      sessions = JSON.parse(rawSessions);
-    } catch {
-      return { changed: false, sessions: [] };
-    }
-    if (!Array.isArray(sessions)) return { changed: false, sessions: [] };
-
-    let changed = false;
-    const sanitized = sessions.map(session => {
-      if (!session || typeof session !== 'object') return session;
-
-      let safeSession = session;
-      if (Object.hasOwn(session, 'token')) {
-        const { token: _discardedToken, ...withoutToken } = session;
-        safeSession = withoutToken;
-        changed = true;
-      }
-
-      const cleanUrl = sanitizeRelayUrl(safeSession.url);
-      if (!cleanUrl.changed) return safeSession;
-      changed = true;
-      return { ...safeSession, url: cleanUrl.url };
-    });
-    return { changed, sessions: sanitized };
-  }
-
   function createAuthenticatedConnection(url, token) {
     return {
       url: sanitizeRelayUrl(url).url,
@@ -238,6 +208,12 @@
     else storage.removeItem(RELAY_TOKEN_KEY);
   }
 
+  // Saved relays were dropped. Their records carried a token in older releases,
+  // so an upgrade clears them instead of leaving secrets behind unreferenced.
+  function forgetSavedRelays(storage) {
+    storage.removeItem('herdr_sessions');
+  }
+
   function forgetStoredRelayToken(storage) {
     storage.removeItem(RELAY_TOKEN_KEY);
   }
@@ -245,11 +221,11 @@
   return {
     createConnectionController,
     createAuthenticatedConnection,
+    forgetSavedRelays,
     forgetStoredRelayToken,
     persistRelayToken,
     relayHttpBase,
     readStoredRelayToken,
-    sanitizeSavedSessions,
     sanitizeRelayUrl,
     stripTokenFromUrl,
   };

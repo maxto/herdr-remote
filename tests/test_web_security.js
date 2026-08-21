@@ -11,28 +11,6 @@ assert.deepEqual(cleanedLocation, {
 });
 assert.equal(JSON.stringify(cleanedLocation).includes('real-secret'), false);
 
-const migratedSessions = security.sanitizeSavedSessions(JSON.stringify([
-  {
-    name: 'Main',
-    url: 'wss://relay.example?token=legacy-secret#token=fragment-secret&view=agents',
-    token: 'real-secret',
-  },
-  { name: 'Backup', url: 'wss://backup.example' },
-]));
-assert.deepEqual(migratedSessions, {
-  changed: true,
-  sessions: [
-    { name: 'Main', url: 'wss://relay.example/#view=agents' },
-    { name: 'Backup', url: 'wss://backup.example' },
-  ],
-});
-assert.equal(JSON.stringify(migratedSessions).includes('secret'), false);
-
-const alreadySafeSessions = security.sanitizeSavedSessions(
-  '[{"name":"Main","url":"wss://relay.example"}]'
-);
-assert.equal(alreadySafeSessions.changed, false);
-
 const authenticatedConnection = security.createAuthenticatedConnection(
   'wss://relay.example/socket?token=legacy-secret#token=fragment-secret&view=agents',
   'real-secret'
@@ -42,6 +20,15 @@ assert.deepEqual(authenticatedConnection, {
   authMessage: { type: 'auth', protocol: 1, token: 'real-secret' },
 });
 assert.equal(authenticatedConnection.url.includes('secret'), false);
+
+// Saved relays are gone. The records they left behind held tokens in older
+// releases, so upgrading must clear them rather than orphan them on disk.
+const relayStorage = {
+  removed: [],
+  removeItem(key) { this.removed.push(key); },
+};
+security.forgetSavedRelays(relayStorage);
+assert.deepEqual(relayStorage.removed, ['herdr_sessions']);
 
 function fakeStorage(initial = {}) {
   const items = { ...initial };
