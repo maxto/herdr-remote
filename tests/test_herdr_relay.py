@@ -302,6 +302,36 @@ class RelayAuthenticationTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200, path)
                 self.assertIn(content_type, response.headers["Content-Type"], path)
 
+    def test_documented_origin_variable_is_honoured(self):
+        with loaded_relay(relay_token="secret", trusted_origins="https://dash.example") as relay:
+            self.assertTrue(relay.origin_is_allowed("https://dash.example"))
+            self.assertFalse(relay.origin_is_allowed("https://evil.example"))
+
+    def test_legacy_origin_variable_is_still_honoured(self):
+        """Operators configured this under both names; neither may be ignored."""
+        with mock.patch.dict(
+            os.environ, {"HERDR_TRUSTED_ORIGINS": "https://dash.example"}, clear=False
+        ):
+            with loaded_relay(relay_token="secret") as relay:
+                self.assertTrue(relay.origin_is_allowed("https://dash.example"))
+                self.assertFalse(relay.origin_is_allowed("https://evil.example"))
+
+    def test_default_port_spelling_matches(self):
+        with loaded_relay(relay_token="secret", trusted_origins="https://dash.example") as relay:
+            self.assertTrue(relay.origin_is_allowed("https://dash.example:443"))
+
+    def test_opaque_origin_is_rejected_and_native_clients_pass(self):
+        with loaded_relay(relay_token="secret", trusted_origins="https://dash.example") as relay:
+            self.assertFalse(relay.origin_is_allowed("null"))
+            self.assertTrue(relay.origin_is_allowed(""))
+
+    def test_without_an_allowlist_only_local_pages_may_connect(self):
+        with mock.patch.dict(os.environ, {"HERDR_TRUSTED_ORIGINS": ""}, clear=False):
+            with loaded_relay(relay_token="secret") as relay:
+                self.assertTrue(relay.origin_is_allowed("http://localhost:5173"))
+                self.assertTrue(relay.origin_is_allowed("http://127.0.0.1:8375"))
+                self.assertFalse(relay.origin_is_allowed("https://evil.example"))
+
 
 class RelayConfigurationTests(unittest.TestCase):
     def test_relay_defaults_to_loopback(self):

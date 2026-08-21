@@ -67,18 +67,6 @@ POLL_INTERVAL = 2
 AUTH_TOKEN = os.environ.get("HERDR_RELAY_TOKEN", "")  # Optional: shared secret for relay auth
 AUTH_PROTOCOL = 1
 AUTH_TIMEOUT_SECONDS = 5
-TRUSTED_ORIGINS = {
-    origin.strip().rstrip("/")
-    for origin in os.environ.get("HERDR_RELAY_TRUSTED_ORIGINS", "").split(",")
-    if origin.strip()
-}
-
-if AUTH_TOKEN and not TRUSTED_ORIGINS:
-    log.warning("Relay token is enabled without trusted browser origins")
-
-
-def origin_is_allowed(origin: str) -> bool:
-    return not origin or not TRUSTED_ORIGINS or origin.rstrip("/") in TRUSTED_ORIGINS
 
 # VAPID Web Push
 VAPID_PUBLIC_KEY = os.environ.get("HERDR_VAPID_PUBLIC", "")
@@ -146,6 +134,91 @@ audit_log = logging.getLogger("herdr-audit")
 audit_log.setLevel(logging.INFO)
 audit_log.addHandler(_audit_handler)
 audit_log.propagate = False
+
+
+# --- WebSocket Origin Validation (CVE mitigation) ---
+# Prevents drive-by attacks from malicious webpages when relay runs without token
+
+def relay_host_is_loopback(host: str) -> bool:
+    """Check if host is a loopback address."""
+    if not host:
+        return False
+    host = host.lower()
+    return host in {"127.0.0.1", "localhost", "::1", "[::1]"}
+
+def normalized_origin(parsed) -> str:
+    """Normalize origin to scheme://host:port for comparison."""
+    scheme = (parsed.scheme or "http").lower()
+    host = (parsed.hostname or "").lower()
+    port = parsed.port
+    # Default ports
+    if port is None:
+        port = 443 if scheme == "https" else 80
+    return f"{scheme}://{host}:{port}"
+
+# The advisory, the tests and the installer all name this
+# HERDR_RELAY_TRUSTED_ORIGINS, while the code once read HERDR_TRUSTED_ORIGINS.
+# Accept both, so a configuration that follows the documentation is never
+# silently ignored (upstream issue #33).
+def _configured_origins() -> set:
+    raw = (
+        os.environ.get("HERDR_RELAY_TRUSTED_ORIGINS")
+        or os.environ.get("HERDR_TRUSTED_ORIGINS", "")
+    )
+    import urllib.parse as urlparse
+
+    origins = set()
+    for entry in raw.split(","):
+        entry = entry.strip().rstrip("/").lower()
+        if not entry:
+            continue
+        origins.add(entry)
+        # https://host and https://host:443 name the same origin; store both so
+        # either spelling in the configuration matches either spelling on the wire.
+        origins.add(normalized_origin(urlparse.urlsplit(entry)))
+    return origins
+
+
+TRUSTED_ORIGINS = _configured_origins()
+
+if AUTH_TOKEN and not TRUSTED_ORIGINS:
+    log.warning("Relay token is enabled without trusted browser origins")
+
+
+def origin_is_allowed(origin: str) -> bool:
+    """Decide whether a browser origin may open a relay WebSocket.
+
+    Native clients — the Telegram bot, the TUI, the menu bar app — send no
+    Origin header and answer to the token alone. Browsers always send one, and
+    they attach stored credentials to any page that asks, so the allowlist is
+    what separates the operator's own dashboard from a site they never chose
+    to visit.
+    """
+    import urllib.parse as urlparse
+
+    if not origin:
+        return True
+
+    if origin.strip().lower() == "null":
+        return False
+
+    try:
+        parsed = urlparse.urlsplit(origin)
+    except ValueError:
+        return False
+
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in {"http", "https"}:
+        return True
+
+    if TRUSTED_ORIGINS:
+        candidates = {origin.strip().rstrip("/").lower(), normalized_origin(parsed)}
+        return bool(candidates & TRUSTED_ORIGINS)
+
+    # With no allowlist configured, a page served by this machine is the only
+    # plausible caller. A token is no help here: the browser would attach it for
+    # a hostile page just as readily.
+    return relay_host_is_loopback(parsed.hostname)
 
 
 def audit(action: str, ip: str, device: str, pane_id: str, detail: str = ""):
