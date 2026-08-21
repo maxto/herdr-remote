@@ -1354,3 +1354,103 @@ class RelaySessionRoutingTests(unittest.TestCase):
 
 if __name__ == "__main__":
     unittest.main()
+
+
+class TimelineTests(unittest.TestCase):
+    """The status log outlives the browser: it is written by the relay.
+
+    A dashboard opened after the fact must be able to answer what happened
+    while nobody was watching, which the client-side timeline never could.
+    """
+
+    AGENT = {
+        "pane_id": "crm:w1:p1",
+        "session_name": "crm",
+        "project": "crm",
+        "agent": "claude",
+    }
+
+    def test_a_change_is_recorded_with_an_iso_timestamp(self):
+        with loaded_relay() as relay:
+            relay.record_status_change(self.AGENT, "blocked")
+
+            entry = relay.timeline_entries[-1]
+            self.assertEqual(entry["status"], "blocked")
+            self.assertEqual(entry["session"], "crm")
+            self.assertEqual(entry["pane_id"], "crm:w1:p1")
+            self.assertRegex(entry["time"], r"^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\+00:00$")
+
+    def test_terminal_content_never_reaches_the_log(self):
+        """Prompts and pane output are the sensitive part; they stay out."""
+        with loaded_relay() as relay:
+            noisy = dict(self.AGENT, prompt="rm -rf /", content="secret output")
+            relay.record_status_change(noisy, "working")
+
+            self.assertEqual(
+                set(relay.timeline_entries[-1]),
+                {"time", "session", "project", "agent", "pane_id", "status"},
+            )
+
+    def test_the_log_is_bounded(self):
+        with loaded_relay() as relay:
+            for index in range(relay.TIMELINE_LIMIT + 50):
+                relay.record_status_change(dict(self.AGENT, project=str(index)), "idle")
+
+            self.assertEqual(len(relay.timeline_entries), relay.TIMELINE_LIMIT)
+            self.assertEqual(relay.timeline_entries[-1]["project"], str(relay.TIMELINE_LIMIT + 49))
+
+    def test_the_log_is_written_for_its_owner_only(self):
+        with loaded_relay() as relay:
+            relay.record_status_change(self.AGENT, "done")
+
+            mode = os.stat(relay.TIMELINE_FILE).st_mode & 0o777
+            self.assertEqual(mode, 0o600)
+            lines = Path(relay.TIMELINE_FILE).read_text().splitlines()
+            self.assertEqual(json.loads(lines[-1])["status"], "done")
+
+    def test_a_restart_keeps_what_happened_before_it(self):
+        """Startup repopulates memory from the file, which is what a restart does."""
+        with loaded_relay() as relay:
+            relay.record_status_change(self.AGENT, "blocked")
+            relay.timeline_entries.clear()
+
+            relay.load_timeline()
+
+            self.assertEqual(relay.timeline_entries[-1]["status"], "blocked")
+
+
+class TimelineDeliveryTests(unittest.TestCase):
+    """The log is agent metadata, so it travels the same authenticated path."""
+
+    def test_an_authenticated_client_receives_the_log(self):
+        with loaded_relay(relay_token="correct-secret") as relay:
+            relay.record_status_change(
+                {"pane_id": "crm:w1:p1", "session_name": "crm", "project": "crm",
+                 "agent": "claude"},
+                "blocked",
+            )
+            ws = _FakeWebSocket([
+                json.dumps({"type": "auth", "protocol": 1, "token": "correct-secret"}),
+                json.dumps({"type": "get_timeline"}),
+            ])
+            with mock.patch.object(relay, "send_current_snapshot", new=mock.AsyncMock()):
+                asyncio.run(relay.handle_client(ws))
+
+        replies = [json.loads(message) for message in ws.sent]
+        timeline = [reply for reply in replies if reply.get("type") == "timeline"]
+        self.assertEqual(len(timeline), 1)
+        self.assertEqual(timeline[0]["entries"][-1]["status"], "blocked")
+
+    def test_an_unauthenticated_client_receives_nothing(self):
+        with loaded_relay(relay_token="correct-secret") as relay:
+            relay.record_status_change(
+                {"pane_id": "crm:w1:p1", "session_name": "crm", "project": "crm",
+                 "agent": "claude"},
+                "blocked",
+            )
+            ws = _FakeWebSocket([json.dumps({"type": "get_timeline"})])
+            with mock.patch.object(relay, "send_current_snapshot", new=mock.AsyncMock()):
+                asyncio.run(relay.handle_client(ws))
+
+        self.assertEqual(ws.sent, [])
+        self.assertEqual(getattr(ws, "closed", None), (1008, "Unauthorized"))

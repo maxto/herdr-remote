@@ -75,6 +75,14 @@ VAPID_SUBJECT = os.environ.get("HERDR_VAPID_SUBJECT", "mailto:herdr@localhost")
 push_subscriptions = []  # list of PushSubscription dicts
 PUSH_SUBS_FILE = os.path.join(LOG_DIR, "push_subs.json")
 
+# Status history. The browser only ever saw what happened while it was open,
+# which is the opposite of what the log is for: the relay is the process that
+# stays awake, so it keeps the record. Metadata only — prompts and pane output
+# are the sensitive part and never reach disk here.
+TIMELINE_FILE = os.path.join(LOG_DIR, "timeline.jsonl")
+TIMELINE_LIMIT = 500
+timeline_entries = []
+
 if RELAY_HOST not in {"127.0.0.1", "localhost", "::1"} and not AUTH_TOKEN:
     raise SystemExit("HERDR_RELAY_TOKEN is required when HERDR_RELAY_HOST binds beyond loopback")
 
@@ -237,6 +245,59 @@ def audit(action: str, ip: str, device: str, pane_id: str, detail: str = ""):
 
 
 # --- Web Push helpers ---
+def load_timeline():
+    """Repopulate the in-memory log from disk, as a restart does."""
+    timeline_entries.clear()
+    try:
+        with open(TIMELINE_FILE, encoding="utf-8") as handle:
+            for line in handle:
+                line = line.strip()
+                if not line:
+                    continue
+                try:
+                    timeline_entries.append(json.loads(line))
+                except json.JSONDecodeError:
+                    continue
+    except FileNotFoundError:
+        return
+    del timeline_entries[:-TIMELINE_LIMIT]
+
+
+def save_timeline():
+    """Rewrite the whole capped log, so the file can never outgrow the cap."""
+    import tempfile
+
+    directory = os.path.dirname(TIMELINE_FILE)
+    handle, temporary = tempfile.mkstemp(dir=directory)
+    try:
+        with os.fdopen(handle, "w", encoding="utf-8") as out:
+            for entry in timeline_entries:
+                out.write(json.dumps(entry) + "\n")
+        os.chmod(temporary, 0o600)
+        os.replace(temporary, TIMELINE_FILE)
+    except Exception:
+        os.unlink(temporary)
+        raise
+
+
+def record_status_change(agent, status):
+    import datetime
+
+    timeline_entries.append({
+        "time": datetime.datetime.now(datetime.timezone.utc).isoformat(timespec="seconds"),
+        "session": agent.get("session_name", ""),
+        "project": agent.get("project", ""),
+        "agent": agent.get("agent", ""),
+        "pane_id": agent.get("pane_id", ""),
+        "status": status,
+    })
+    del timeline_entries[:-TIMELINE_LIMIT]
+    try:
+        save_timeline()
+    except OSError as error:
+        log.warning("Could not write the status log: %s", error)
+
+
 def _load_push_subs():
     global push_subscriptions
     if os.path.isfile(PUSH_SUBS_FILE):
@@ -290,6 +351,7 @@ async def send_web_push(title: str, body: str, url: str = "/", clear: bool = Fal
         _save_push_subs()
 
 _load_push_subs()
+load_timeline()
 
 
 def _invoke_herdr(*args, remote=None, session=None):
@@ -889,6 +951,8 @@ async def _poll_once():
                 if last_statuses.get(pid) == "blocked":
                     await send_web_push("", "", clear=True)
                 last_blocked_prompts.pop(pid, None)
+            if last_statuses.get(pid) != status:
+                record_status_change(a, status)
             last_statuses[pid] = status
 async def event_push():
     while True:
@@ -1283,6 +1347,11 @@ async def handle_client(ws):
                 # Echo the id the client asked with, so its own filtering matches.
                 await ws.send(json.dumps({
                     "type": "pane_content", "pane_id": msg["pane_id"], "content": content
+                }))
+            elif msg_type == "get_timeline":
+                await ws.send(json.dumps({
+                    "type": "timeline",
+                    "entries": timeline_entries,
                 }))
             elif msg_type == "get_history":
                 target = resolve_pane(msg["pane_id"])

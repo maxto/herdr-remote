@@ -398,16 +398,19 @@ function toggleTimeline() {
   t.style.display = show ? 'block' : 'none';
   document.getElementById('agentListView').style.display = show ? 'none' : '';
   document.getElementById('settingsView').style.display = 'none';
-  if (show) renderTimeline();
+  if (show) {
+    if (ws && ws.readyState === WebSocket.OPEN) ws.send(JSON.stringify({type: 'get_timeline'}));
+    renderTimeline();
+  }
 }
 
 function renderTimeline() {
   const el = document.getElementById('timelineList');
   if (!timeline.length) { el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:40px">No activity yet. Status changes appear here.</p>'; return; }
   el.innerHTML = timeline.map(e => {
-    const t = e.time.toLocaleTimeString([], {hour:'2-digit', minute:'2-digit'});
     const color = e.status==='blocked'?'var(--red)':e.status==='working'?'var(--green)':'var(--muted)';
-    return `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted)">${t}</span><span style="flex:1">${e.project} (${e.agent})</span><span style="color:${color}">${e.status}</span></div>`;
+    const where = e.session && e.session !== e.project ? `${escAttr(e.session)} / ` : '';
+    return `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted);white-space:nowrap">${escAttr(e.time)}</span><span style="flex:1">${where}${escAttr(e.project)} (${escAttr(e.agent)})</span><span style="color:${color}">${escAttr(e.status)}</span></div>`;
   }).join('');
 }
 
@@ -572,7 +575,7 @@ function handleMessage(msg) {
     for (const a of msg.agents) {
       const prev = prevStatuses[a.pane_id];
       if (prev && prev !== a.status) {
-        timeline.unshift({project: a.project, agent: a.agent, status: a.status, time: new Date()});
+        timeline.unshift({project: a.project, agent: a.agent, status: a.status, time: new Date().toISOString()});
         if (timeline.length > 100) timeline.pop();
       }
       prevStatuses[a.pane_id] = a.status;
@@ -602,7 +605,7 @@ function handleMessage(msg) {
     if (existing) Object.assign(existing, update);
     else agents.push({...update});
     if (previousStatus && previousStatus !== update.status) {
-      timeline.unshift({project: update.project, agent: update.agent, status: update.status, time: new Date()});
+      timeline.unshift({project: update.project, agent: update.agent, status: update.status, time: new Date().toISOString()});
       if (timeline.length > 100) timeline.pop();
     }
     prevStatuses[update.pane_id] = update.status;
@@ -623,7 +626,7 @@ function handleMessage(msg) {
     else agents.push({...msg, status:'blocked'});
     if(window.cue) cue('chime');
     if (!msg.update) {
-      timeline.unshift({project: msg.project, agent: msg.agent, status: 'blocked', time: new Date()});
+      timeline.unshift({project: msg.project, agent: msg.agent, status: 'blocked', time: new Date().toISOString()});
       if (timeline.length > 100) timeline.pop();
     }
     render();
@@ -640,6 +643,10 @@ function handleMessage(msg) {
     } else {
       el.scrollTop = el.scrollHeight;
     }
+  } else if (msg.type === 'timeline') {
+    // The relay kept the record while this page was closed, so its copy wins.
+    timeline = msg.entries.slice().reverse();
+    renderTimeline();
   } else if (msg.type === 'history' && msg.pane_id === activePane) {
     renderHistory(msg.messages || []);
   }
