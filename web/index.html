@@ -332,6 +332,17 @@ let activeSession = null;
 const escAttr = value => String(value ?? '')
   .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
+// The log stores UTC with an offset, which is right for a file and wrong for a
+// reader: an entry written at 18:32 must not read 16:32 on the operator's own
+// screen. Render local wall-clock time, seconds included.
+const formatTimestamp = iso => {
+  const at = new Date(iso);
+  if (Number.isNaN(at.getTime())) return String(iso ?? '');
+  const pad = n => String(n).padStart(2, '0');
+  return `${at.getFullYear()}-${pad(at.getMonth() + 1)}-${pad(at.getDate())}`
+    + ` ${pad(at.getHours())}:${pad(at.getMinutes())}:${pad(at.getSeconds())}`;
+};
+
 const agentLabel = a => a.label || a.project || a.agent;
 
 // A session name is only worth showing when it disambiguates. Sessions are
@@ -413,7 +424,7 @@ function renderTimeline() {
   el.innerHTML = timeline.map(e => {
     const color = e.status==='blocked'?'var(--red)':e.status==='working'?'var(--green)':'var(--muted)';
     const where = e.session && e.session !== e.project ? `${escAttr(e.session)} / ` : '';
-    return `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted);white-space:nowrap">${escAttr(e.time)}</span><span style="flex:1">${where}${escAttr(e.project)} (${escAttr(e.agent)})</span><span style="color:${color}">${escAttr(e.status)}</span></div>`;
+    return `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted);white-space:nowrap">${escAttr(formatTimestamp(e.time))}</span><span style="flex:1">${where}${escAttr(e.project)} (${escAttr(e.agent)})</span><span style="color:${color}">${escAttr(e.status)}</span></div>`;
   }).join('');
 }
 
