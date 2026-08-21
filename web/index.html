@@ -183,7 +183,7 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
       <input id="relayUrl" name="relayUrl" type="url" autocomplete="username" placeholder="wss://your-relay.example" />
       <label for="relayToken" style="margin-top:8px">Token</label>
       <input id="relayToken" name="relayToken" type="password" autocomplete="current-password" placeholder="shared secret" />
-      <button type="submit">Connect</button>
+      <button type="submit" id="connectButton">Connect</button>
     </form>
     <div class="hint">Served by your relay? The URL fills itself in. Otherwise paste its <code>wss://</code> address. <a href="https://github.com/maxto/herdr-remote/blob/main/docs/TAILSCALE.md" style="color:var(--blue)">Setup guide →</a></div>
   </div>
@@ -466,6 +466,16 @@ function setStatus(s) {
   dot.style.background = s==='connected'?'var(--green)':pending?'var(--orange)':'var(--red)';
   label.textContent = labels[s] || 'offline';
   label.style.color = s==='connected'?'var(--green)':pending?'var(--orange)':'var(--red)';
+  // Connect is the only control that says whether the settings took effect, so
+  // it has to stop reading like nothing happened once they did.
+  const connectButton = document.getElementById('connectButton');
+  if (connectButton) {
+    const settled = s === 'connected';
+    connectButton.textContent = settled ? 'Connected'
+      : pending ? 'Connecting…'
+      : relayUrlFromStorage() ? 'Reconnect' : 'Connect';
+    connectButton.disabled = settled || pending;
+  }
   if (s === 'unauthorized') showTokenRejected();
 }
 

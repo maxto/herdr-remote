@@ -122,3 +122,22 @@ class HomeNavigationTest(unittest.TestCase):
 
         for state in ("activePane", "activeSession", "activeWorkspace", "activeTab"):
             self.assertIn(state, body, state)
+
+
+class ConnectButtonTest(unittest.TestCase):
+    """The button is the only control that reports whether settings took."""
+
+    def setUp(self):
+        self.source = (Path(__file__).parent.parent / "web" / "index.html").read_text()
+
+    def test_the_button_is_addressable(self):
+        self.assertIn('id="connectButton"', self.source)
+
+    def test_status_changes_drive_the_button(self):
+        body = self.source[self.source.index("function setStatus("):]
+        body = body[:body.index("\nfunction ")]
+
+        self.assertIn("connectButton", body)
+        for label in ("Connected", "Reconnect", "Connecting"):
+            self.assertIn(label, body, label)
+        self.assertIn("disabled", body)
