@@ -11,7 +11,7 @@ receive a relay URL that may contain the token. This creates avoidable exposure
 through URLs, diagnostics, exception messages, browser tools, and proxy logs.
 
 The public web frontend is deployed from the personal fork to
-`https://herdr-remote-bfd.pages.dev`. The relay remains bound to loopback and
+a single trusted origin. The relay remains bound to loopback and
 will later be exposed through a Cloudflare Tunnel. No tunnel may be started
 until this design is implemented, tested, deployed, and configured.
 

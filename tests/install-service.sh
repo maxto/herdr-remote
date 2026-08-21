@@ -264,12 +264,12 @@ assert_contains "$MAC_HOME/.config/herdr-remote/secrets.env" 'HERDR_RELAY_TOKEN=
 assert_contains "$TMP/mac-new.log" 'Telegram bot verified as @installer_test_bot'
 
 TRUSTED_ORIGIN_HOME="$TMP/trusted-origin-home"
-HERDR_RELAY_TRUSTED_ORIGINS=https://herdr-remote-bfd.pages.dev \
+HERDR_RELAY_TRUSTED_ORIGINS=https://dashboard.example \
     run_install macos "$TRUSTED_ORIGIN_HOME" 'ynn' > "$TMP/trusted-origin.log" || {
     cat "$TMP/trusted-origin.log"
     exit 1
 }
-assert_contains "$TRUSTED_ORIGIN_HOME/.config/herdr-remote/config.env" 'HERDR_RELAY_TRUSTED_ORIGINS=https://herdr-remote-bfd.pages.dev'
+assert_contains "$TRUSTED_ORIGIN_HOME/.config/herdr-remote/config.env" 'HERDR_RELAY_TRUSTED_ORIGINS=https://dashboard.example'
 assert_not_contains "$TRUSTED_ORIGIN_HOME/.config/herdr-remote/secrets.env" 'HERDR_RELAY_TRUSTED_ORIGINS='
 
 MULTI_ORIGIN_HOME="$TMP/multi-origin-home"

@@ -180,7 +180,7 @@ the clean relay URL, while `HERDR_RELAY_TOKEN` is stored only in
 origins as non-secret configuration. For the production Pages frontend, use:
 
 ```bash
-export HERDR_RELAY_TRUSTED_ORIGINS=https://herdr-remote-bfd.pages.dev
+export HERDR_RELAY_TRUSTED_ORIGINS=https://your-dashboard.example
 ./relay/install-service.sh
 ```
 

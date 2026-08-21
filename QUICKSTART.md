@@ -56,12 +56,11 @@ Before installing a token-protected relay for the production Pages frontend,
 configure its exact trusted browser origin as non-secret configuration:
 
 ```bash
-export HERDR_RELAY_TRUSTED_ORIGINS=https://herdr-remote-bfd.pages.dev
+export HERDR_RELAY_TRUSTED_ORIGINS=https://your-dashboard.example
 ./relay/install-service.sh
 ```
 
-Open [herdr-remote-bfd.pages.dev](https://herdr-remote-bfd.pages.dev), then
-enter the clean tunnel relay URL and browser token separately. The browser keeps
+Open your dashboard, then enter the relay URL and token separately. The browser keeps
 the token only in memory and forgets it on refresh. Never add a token to a Pages
 URL or relay URL. For protected HTTP requests, use
 `Authorization: Bearer <relay-token>` with a redacted placeholder.
@@ -72,7 +71,7 @@ URL or relay URL. For protected HTTP requests, use
 
 **Telegram:** send `/start` for a clickable dashboard of every running agent. Select an agent, then reply to the generated output prompt. Finished and blocked notifications also provide **Open output & reply**, and larger herds include Previous and Next buttons.
 
-**Web app** (phone): open [herdr-remote-bfd.pages.dev](https://herdr-remote-bfd.pages.dev), tap ⚙, then enter the clean tunnel relay URL and browser token separately.
+**Web app** (phone): open the dashboard the relay serves, tap ⚙, then enter the relay token. See [docs/TAILSCALE.md](docs/TAILSCALE.md).
 
 **Menu bar app** (macOS): download from [Releases](https://github.com/dcolinmorgan/herdr-remote/releases).
 
