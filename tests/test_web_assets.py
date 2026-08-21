@@ -141,3 +141,29 @@ class ConnectButtonTest(unittest.TestCase):
         for label in ("Connected", "Reconnect", "Connecting"):
             self.assertIn(label, body, label)
         self.assertIn("disabled", body)
+
+
+class StatusColourTest(unittest.TestCase):
+    """The list and the log must never disagree about what a colour means."""
+
+    def setUp(self):
+        self.source = (Path(__file__).parent.parent / "web" / "index.html").read_text()
+
+    def test_every_status_has_a_colour(self):
+        table = self.source[self.source.index("const STATUS_COLORS"):]
+        table = table[:table.index("};")]
+
+        for status in ("blocked", "working", "done", "idle"):
+            self.assertIn(status, table, status)
+
+    def test_both_views_read_the_same_table(self):
+        card = self.source[self.source.index("function agentCard("):]
+        card = card[:card.index("\nfunction ")]
+        timeline = self.source[self.source.index("function renderTimeline("):]
+        timeline = timeline[:timeline.index("\nfunction ")]
+
+        self.assertIn("statusColor(", card)
+        self.assertIn("statusColor(", timeline)
+        # A second, hand-rolled ternary is how the two drifted apart before.
+        self.assertNotIn("'var(--red)'", card)
+        self.assertNotIn("'var(--red)'", timeline)

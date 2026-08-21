@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
-<link rel="manifest" href="data:application/json,{&quot;name&quot;:&quot;herdr-remote&quot;,&quot;short_name&quot;:&quot;herdr&quot;,&quot;display&quot;:&quot;standalone&quot;,&quot;background_color&quot;:&quot;%23e1e2e7&quot;,&quot;theme_color&quot;:&quot;%23e1e2e7&quot;}">
+<link rel="manifest" href="data:application/json,{&quot;name&quot;:&quot;herdr-remote&quot;,&quot;short_name&quot;:&quot;herdr&quot;,&quot;display&quot;:&quot;standalone&quot;,&quot;background_color&quot;:&quot;%23ffffff&quot;,&quot;theme_color&quot;:&quot;%23ffffff&quot;}">
 <title>herdr-remote</title>
 <style data-font-face>
 @font-face {
@@ -18,15 +18,20 @@
 </style>
 <style>
 :root {
-  --bg: #e1e2e7; --surface: #d8d9e0; --border: #b6bbd1; --text: #1f2f66; --muted: #68709a;
-  --green: #587539; --red: #f52a65; --blue: #2e7de9; --orange: #8c6c3e;
-  --term-bg: #1a1b26; --term-text: #c0caf5;
+  /* The list is read at a glance on a phone, often outdoors, so the palette is
+     chosen for contrast first: near-black text on white, and status hues that
+     stay apart from each other for the common forms of colour blindness. */
+  --bg: #ffffff; --surface: #f8f9fa; --border: #dadce0; --text: #202124; --muted: #5f6368;
+  --green: #137333; --red: #c5221f; --blue: #1967d2; --orange: #a35200;
+  --live: #34a853;
+  --term-bg: #202124; --term-text: #e8eaed;
 }
 @media (prefers-color-scheme: dark) {
   :root {
-    --bg: #1a1b26; --surface: #202331; --border: #2f3549; --text: #c0caf5; --muted: #565f89;
-    --green: #9ece6a; --red: #f7768e; --blue: #7aa2f7; --orange: #e0af68;
-    --term-bg: #1a1b26; --term-text: #c0caf5;
+    --bg: #17181c; --surface: #1f2126; --border: #35373d; --text: #e8eaed; --muted: #9aa0a6;
+    --green: #5bb974; --red: #f28b82; --blue: #8ab4f8; --orange: #fdd663;
+    --live: #81c995;
+    --term-bg: #17181c; --term-text: #e8eaed;
   }
 }
 
@@ -67,6 +72,12 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
 .agent:active { transform: scale(0.99); box-shadow: none; }
 .agent .dot { width: 10px; height: 10px; }
 .agent.blocked { border-color: var(--red); background: color-mix(in srgb, var(--red) 5%, var(--surface)); }
+.agent { border-left: 4px solid var(--border); }
+.agent.status-blocked { border-left-color: var(--red); }
+.agent.status-working { border-left-color: var(--blue); }
+.agent.status-done { border-left-color: var(--green); }
+.agent.status-idle { border-left-color: var(--muted); }
+.status-pill { font-size: 0.6rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; white-space: nowrap; border: 1px solid currentColor; background: color-mix(in srgb, currentColor 12%, transparent); }
 .workspace-card { border-color: color-mix(in srgb, var(--text) 10%, transparent); }
 .count-pill { display: inline-block; padding: 1px 6px; border-radius: 4px; background: color-mix(in srgb, var(--text) 8%, transparent); font-size: 0.65rem; }
 .chip-strip { display: flex; align-items: center; gap: 8px; overflow-x: auto; padding: 8px 12px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
@@ -335,6 +346,16 @@ const escAttr = value => String(value ?? '')
 // The log stores UTC with an offset, which is right for a file and wrong for a
 // reader: an entry written at 18:32 must not read 16:32 on the operator's own
 // screen. Render local wall-clock time, seconds included.
+// One place decides what a status looks like, so the list and the log can never
+// disagree about which colour means waiting for you.
+const STATUS_COLORS = {
+  blocked: 'var(--red)',
+  working: 'var(--blue)',
+  done: 'var(--green)',
+  idle: 'var(--muted)',
+};
+const statusColor = status => STATUS_COLORS[status] || 'var(--muted)';
+
 const formatTimestamp = iso => {
   const at = new Date(iso);
   if (Number.isNaN(at.getTime())) return String(iso ?? '');
@@ -422,7 +443,7 @@ function renderTimeline() {
   const el = document.getElementById('timelineList');
   if (!timeline.length) { el.innerHTML = '<p style="color:var(--muted);text-align:center;padding:40px">No activity yet. Status changes appear here.</p>'; return; }
   el.innerHTML = timeline.map(e => {
-    const color = e.status==='blocked'?'var(--red)':e.status==='working'?'var(--green)':'var(--muted)';
+    const color = statusColor(e.status);
     const where = e.session && e.session !== e.project ? `${escAttr(e.session)} / ` : '';
     return `<div style="display:flex;gap:8px;padding:4px 0;border-bottom:1px solid var(--border)"><span style="color:var(--muted);white-space:nowrap">${escAttr(formatTimestamp(e.time))}</span><span style="flex:1">${where}${escAttr(e.project)} (${escAttr(e.agent)})</span><span style="color:${color}">${escAttr(e.status)}</span></div>`;
   }).join('');
@@ -463,9 +484,9 @@ function setStatus(s) {
     // "offline" sends people hunting for the wrong fault.
     unauthorized: 'token rejected',
   };
-  dot.style.background = s==='connected'?'var(--green)':pending?'var(--orange)':'var(--red)';
+  dot.style.background = s==='connected'?'var(--live)':pending?'var(--orange)':'var(--red)';
   label.textContent = labels[s] || 'offline';
-  label.style.color = s==='connected'?'var(--green)':pending?'var(--orange)':'var(--red)';
+  label.style.color = s==='connected'?'var(--live)':pending?'var(--orange)':'var(--red)';
   // Connect is the only control that says whether the settings took effect, so
   // it has to stop reading like nothing happened once they did.
   const connectButton = document.getElementById('connectButton');
@@ -813,7 +834,7 @@ function createTab(workspaceId) {
 }
 
 function agentCard(a) {
-  const color = a.status==='blocked'?'var(--red)':a.status==='working'?'var(--green)':'var(--muted)';
+  const color = statusColor(a.status);
   const pulseClass = a.status==='working'?' pulse':'';
   const host = a.host&&a.host!=='local'?` <span style="color:var(--orange);font-size:0.6rem">@${a.host}</span>`:'';
   const cwd = a.cwd ? `<span style="font-family:monospace;opacity:0.7">${a.cwd.split('/').slice(-2).join('/')}</span>` : '';
@@ -823,9 +844,10 @@ function agentCard(a) {
   const paneRef = needsSessionLabel(a) && a.herdr_pane_id
     ? `<span style="font-family:monospace;opacity:0.7">${escAttr(a.herdr_pane_id)}</span> · ` : '';
   const ariaSession = needsSessionLabel(a) ? `session ${a.session_name}, ` : '';
-  return `<div class="agent${a.status==='blocked'?' blocked':''}" role="button" tabindex="0" aria-label="${ariaSession}${label}, ${a.status}" data-pane-id="${escAttr(a.pane_id)}" data-agent-name="${escAttr(label)}" onclick="openTerminal(this.dataset.paneId)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal(this.dataset.paneId)}">
+  return `<div class="agent status-${escAttr(a.status)}${a.status==='blocked'?' blocked':''}" role="button" tabindex="0" aria-label="${ariaSession}${label}, ${a.status}" data-pane-id="${escAttr(a.pane_id)}" data-agent-name="${escAttr(label)}" onclick="openTerminal(this.dataset.paneId)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal(this.dataset.paneId)}">
     <span class="dot${pulseClass}" style="background:${color}" aria-hidden="true"></span>
     <div class="info"><div class="project">${sessionBadge(a)}${label}${host}</div><div class="meta">${a.agent} · ${paneRef}${cwd}</div></div>
+    <span class="status-pill" style="color:${color}" aria-hidden="true">${escAttr(a.status)}</span>
     <span style="color:var(--muted);font-size:1.2rem" aria-hidden="true">›</span>
   </div>`;
 }
