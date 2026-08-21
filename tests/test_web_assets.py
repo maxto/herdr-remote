@@ -103,3 +103,22 @@ class SetupGuideLinkTest(unittest.TestCase):
     def test_setup_guide_target_exists(self):
         guide = Path(__file__).parent.parent / "docs" / "TAILSCALE.md"
         self.assertTrue(guide.is_file(), "the linked guide must exist in the repo")
+
+
+class HomeNavigationTest(unittest.TestCase):
+    """The title is the way back, so it must be operable by keyboard too."""
+
+    def test_the_title_is_a_button(self):
+        markup = (Path(__file__).parent.parent / "web" / "index.html").read_text()
+        header = markup[markup.index("<h1>"):markup.index("</h1>") + 5]
+
+        self.assertIn("<button", header)
+        self.assertIn('onclick="goHome()"', header)
+        self.assertIn("aria-label", header)
+
+    def test_going_home_clears_every_filter(self):
+        source = (Path(__file__).parent.parent / "web" / "index.html").read_text()
+        body = source[source.index("function goHome()"):source.index("function closeTerminal()")]
+
+        for state in ("activePane", "activeSession", "activeWorkspace", "activeTab"):
+            self.assertIn(state, body, state)
