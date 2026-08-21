@@ -1,5 +1,13 @@
 # Agent Instructions
 
+## Workflow
+
+- Present the plan or design and stop. Wait for explicit approval before
+  writing code, editing config, or changing user-facing copy — regardless of
+  how small the change is.
+- Once approved, carry the task through to the end without asking again:
+  implement, test, commit, then report the result.
+
 ## Guidelines
 
 - Read the project README and any existing docs before making changes
@@ -21,4 +29,5 @@
 
 - Write clear, concise commit messages
 - Stage only files related to the current task
-- Do not push to main/master without explicit permission
+- Push to this fork's `main` directly; it is the working branch here
+- Never push to another repository or open pull requests upstream
