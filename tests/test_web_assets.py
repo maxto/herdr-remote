@@ -87,3 +87,19 @@ class CredentialAutofillTest(unittest.TestCase):
         self.assertEqual(field["attrs"].get("autocomplete"), "current-password")
         self.assertTrue(field["attrs"].get("name"))
         self.assertEqual(field["attrs"].get("type"), "password")
+
+
+class SetupGuideLinkTest(unittest.TestCase):
+    """The dashboard must send its own operator to its own documentation."""
+
+    def test_setup_guide_points_at_this_fork(self):
+        markup = (Path(__file__).parent.parent / "web" / "index.html").read_text()
+        start = markup.index('id="relayCredentials"')
+        hint = markup[start:markup.index("</div>", markup.index("hint", start))]
+
+        self.assertIn("github.com/maxto/herdr-remote", hint)
+        self.assertNotIn("dcolinmorgan", hint)
+
+    def test_setup_guide_target_exists(self):
+        guide = Path(__file__).parent.parent / "docs" / "TAILSCALE.md"
+        self.assertTrue(guide.is_file(), "the linked guide must exist in the repo")

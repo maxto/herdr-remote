@@ -187,7 +187,7 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
       <input id="relayToken" name="relayToken" type="password" autocomplete="current-password" placeholder="shared secret" />
       <button type="submit">Connect</button>
     </form>
-    <div class="hint">Run <code>./relay/start.sh</code> to get a URL. <a href="https://github.com/dcolinmorgan/herdr-remote/blob/main/QUICKSTART.md" style="color:var(--blue)">Setup guide →</a></div>
+    <div class="hint">Served by your relay? The URL fills itself in. Otherwise paste its <code>wss://</code> address. <a href="https://github.com/maxto/herdr-remote/blob/main/docs/TAILSCALE.md" style="color:var(--blue)">Setup guide →</a></div>
   </div>
 
   <div class="setting-group">
@@ -558,8 +558,9 @@ function showSetup() {
     <p style="margin-top:16px"><button onclick="tryDemo()" style="padding:10px 20px;border-radius:8px;border:none;background:var(--blue);color:#fff;font-weight:600;font-size:0.85rem;cursor:pointer">Try Demo</button></p>
     <p style="margin-top:16px;font-size:0.75rem;color:var(--muted);text-align:left;max-width:280px;margin-left:auto;margin-right:auto">
       <strong>Connect your own:</strong><br>
-      1. Run: <code style="font-size:0.7rem">cd relay && ./start.sh</code><br>
-      2. Tap ⚙ → paste the wss:// URL<br>
+      1. Start the relay on your machine<br>
+      2. Publish it with Tailscale or a tunnel<br>
+      3. Tap ⚙ → paste your relay token<br>
     </p>
   </div>`;
 }
