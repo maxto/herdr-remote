@@ -183,7 +183,7 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
     <form id="relayCredentials" onsubmit="event.preventDefault(); saveAndConnect();">
       <label for="relayUrl">Relay URL</label>
       <input id="relayUrl" name="relayUrl" type="url" autocomplete="username" placeholder="wss://your-tunnel.trycloudflare.com" />
-      <label for="relayToken" style="margin-top:8px">Token (optional)</label>
+      <label for="relayToken" style="margin-top:8px">Token</label>
       <input id="relayToken" name="relayToken" type="password" autocomplete="current-password" placeholder="shared secret" />
       <button type="submit">Connect</button>
     </form>
@@ -526,9 +526,28 @@ function setStatus(s) {
   const dot = document.getElementById('statusDot');
   const label = document.getElementById('connLabel');
   const pending = s === 'connecting' || s === 'authenticating';
+  const labels = {
+    connected: 'live',
+    authenticating: 'authenticating…',
+    connecting: 'connecting…',
+    // A refused token is a settings problem, not a network problem, and saying
+    // "offline" sends people hunting for the wrong fault.
+    unauthorized: 'token rejected',
+  };
   dot.style.background = s==='connected'?'var(--green)':pending?'var(--orange)':'var(--red)';
-  label.textContent = s==='connected'?'live':s==='authenticating'?'authenticating…':s==='connecting'?'connecting…':'offline';
+  label.textContent = labels[s] || 'offline';
   label.style.color = s==='connected'?'var(--green)':pending?'var(--orange)':'var(--red)';
+  if (s === 'unauthorized') showTokenRejected();
+}
+
+function showTokenRejected() {
+  document.getElementById('agents').innerHTML = `<div class="empty">
+    <p style="font-size:1.5rem;margin-bottom:12px">🔒</p>
+    <p><strong>Token rejected</strong></p>
+    <p style="margin-top:8px">This relay requires a token, and the one it received
+    was missing or wrong.</p>
+    <p style="margin-top:16px"><button onclick="toggleSettings()" style="padding:10px 20px;border-radius:8px;border:none;background:var(--blue);color:#fff;font-weight:600;font-size:0.85rem;cursor:pointer">Open settings</button></p>
+  </div>`;
 }
 
 function showSetup() {

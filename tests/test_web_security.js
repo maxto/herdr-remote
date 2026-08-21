@@ -149,3 +149,45 @@ secondSocket.onmessage({
   data: JSON.stringify({ type: 'auth_result', protocol: 1, ok: true }),
 });
 assert.equal(lifecycleHarness.statuses.at(-1), 'connected');
+
+// --- Admission is what "connected" means --------------------------------
+
+const tokenlessConnection = security.createAuthenticatedConnection('wss://relay.example', '');
+
+// An open socket is not proof of admission: a relay that wants a token closes
+// a tokenless client moments later.
+const tokenlessHarness = createSocketHarness();
+const tokenlessSocket = tokenlessHarness.controller.connect(tokenlessConnection, () => {});
+tokenlessSocket.onopen();
+assert.equal(
+  tokenlessHarness.statuses.includes('connected'),
+  false,
+  'an open socket alone must not read as connected'
+);
+
+tokenlessSocket.onmessage({ data: JSON.stringify({ type: 'agents', agents: [] }) });
+assert.equal(tokenlessHarness.statuses.at(-1), 'connected');
+assert.deepEqual(tokenlessHarness.applicationMessages, [{ type: 'agents', agents: [] }]);
+
+// A rejection is final. Retrying the same credentials can only fail again.
+const rejectedHarness = createSocketHarness();
+const rejectedSocket = rejectedHarness.controller.connect(tokenlessConnection, () => {
+  throw new Error('an unauthorized client must not reconnect');
+});
+rejectedSocket.onopen();
+rejectedSocket.onclose({ code: 1008, reason: 'Unauthorized' });
+assert.equal(rejectedHarness.statuses.at(-1), 'unauthorized');
+assert.deepEqual(rejectedHarness.scheduledReconnects, []);
+
+// An ordinary drop is not a rejection: it must still reconnect.
+const droppedHarness = createSocketHarness();
+const droppedSocket = droppedHarness.controller.connect(authenticatedConnection, () => {});
+droppedSocket.onopen();
+droppedSocket.onmessage({
+  data: JSON.stringify({ type: 'auth_result', protocol: 1, ok: true }),
+});
+droppedSocket.onclose({ code: 1006 });
+assert.equal(droppedHarness.scheduledReconnects.length, 1);
+assert.equal(droppedHarness.statuses.at(-1), 'disconnected');
+
+console.log('admission handling: ok');

@@ -48,6 +48,9 @@
     };
   }
 
+  // Policy-violation close: the relay refused these credentials.
+  const UNAUTHORIZED_CLOSE_CODE = 1008;
+
   function isSuccessfulAuthResult(message) {
     return Boolean(
       message
@@ -108,19 +111,26 @@
       socket = currentSocket;
       onSocketChange(currentSocket);
       let awaitingAuthentication = Boolean(connection.authMessage.token);
+      // Without a token there is nothing to send, but an open socket is not
+      // proof of admission either: a relay that requires one closes us moments
+      // later. Wait for the snapshot it pushes of its own accord instead.
+      let awaitingAdmission = !awaitingAuthentication;
 
       currentSocket.onopen = () => {
         if (!isCurrent(currentSocket)) return;
-        if (!awaitingAuthentication) {
-          onStatus('connected');
-          onAuthenticated();
-          return;
-        }
+        if (!awaitingAuthentication) return;
         onStatus('authenticating');
         currentSocket.send(JSON.stringify(connection.authMessage));
       };
-      currentSocket.onclose = () => {
+      currentSocket.onclose = event => {
         if (!clearCurrentSocket(currentSocket)) return;
+        // Reconnecting after a rejection would only replay the same refused
+        // credentials, so report it and stop instead of flickering forever.
+        if (event && event.code === UNAUTHORIZED_CLOSE_CODE) {
+          cancelPendingReconnect();
+          onStatus('unauthorized');
+          return;
+        }
         onStatus('disconnected');
         reconnectHandle = scheduleReconnect(() => {
           reconnectHandle = null;
@@ -150,6 +160,12 @@
           onStatus('connected');
           onAuthenticated();
           return;
+        }
+
+        if (awaitingAdmission) {
+          awaitingAdmission = false;
+          onStatus('connected');
+          onAuthenticated();
         }
 
         if (message.type === 'auth_result') return;
