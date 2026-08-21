@@ -681,10 +681,10 @@ function renderWorkspaces(sessions, workspaces) {
     html += `<div class="section-header" style="color:var(--red)"><span class="dot" style="background:var(--red)"></span>Needs you <span style="opacity:0.6">(${blocked.length})</span></div>`;
     html += blocked.map(a => agentCard(a)).join('');
   }
-  // While every session holds exactly one distinctly-named space, the Spaces
-  // strip already *is* the session axis and a second row of chips would only
-  // repeat it. Show Sessions once that stops being true — or once the user has
-  // filtered by one, so the way back to All stays reachable.
+  // While every session holds exactly one distinctly-named workspace, the
+  // Workspaces strip already *is* the session axis and a second row of chips
+  // would only repeat it. Show Sessions once that stops being true — or once
+  // the user has filtered by one, so the way back to All stays reachable.
   const spaceLabels = workspaces.map(spaceLabel);
   const showSessions = sessions.length > 1 && (
     activeSession !== null
@@ -709,7 +709,7 @@ function renderWorkspaces(sessions, workspaces) {
     activeWorkspace = null;
     activeTab = null;
   }
-  html += `<div class="chip-strip"><span class="chip-label">Spaces</span>`;
+  html += `<div class="chip-strip"><span class="chip-label">Workspaces</span>`;
   html += `<button class="chip${activeWorkspace===null?' active':''}" onclick="backToWorkspaces()">All</button>`;
   for (const wsId of visibleWorkspaces) {
     const wsAgents = agents.filter(a => a.workspace_id === wsId);
