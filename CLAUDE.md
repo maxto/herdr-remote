@@ -68,21 +68,36 @@ cd herdi-ios && xcodegen generate
 | `HERDR_REMOTES` | Comma-separated SSH targets to poll |
 | `HERDR_BIN` | Path to herdr binary (default: `/opt/homebrew/bin/herdr`) |
 | `HERDR_RELAY` | Relay URL used by clients (default: `ws://127.0.0.1:8375`) |
+| `HERDR_RELAY_TRUSTED_ORIGINS` | Comma-separated browser origins allowed to open a socket (alias: `HERDR_TRUSTED_ORIGINS`) |
+| `HERDR_VAPID_PUBLIC` / `HERDR_VAPID_PRIVATE` | Web push signing keys; without them the push button cannot work |
 
 ## Web App
 
-The web app is a single self-contained HTML file (`web/index.html`) with inline CSS and JS — no build step. It's deployed to Cloudflare Pages. It includes 11 color themes, a mobile terminal keyboard, PWA support, and agent-icon detection.
+The web app is a single self-contained HTML file (`web/index.html`) plus `web/security.js`, with inline CSS and JS — no build step. The relay serves it directly, so a saved file is live on reload. It follows the system light/dark setting and includes a mobile terminal keyboard, PWA support with web push, and agent-icon detection.
 
 ## WebSocket Protocol
 
 Messages are JSON with a `type` field:
 
-**Server → Client:** `agents` (complete state snapshot), `agent_update` (single-pane state merge), `blocked` (approval prompt), `pane_content` (terminal read)
+A token-protected relay authenticates first: the client sends `auth`
+(`{type, protocol, token}`) and gets `auth_result` before anything else. An
+unauthenticated socket is closed with `1008` and receives no agent data. A
+browser origin outside the allowlist is refused with `403` before the upgrade.
 
-**Client → Server:** `respond` (send text to agent), `read_pane` (request terminal content), `send_keys` (send key sequences), `send_text` (raw text without newline)
+**Server → Client:** `agents` (complete state snapshot), `agent_update` (single-pane state merge), `blocked` (approval prompt), `pane_content` (terminal read), `history` (one pane's conversation), `timeline` (status log)
+
+**Client → Server:** `respond` (send text to agent), `read_pane` (request terminal content), `send_keys` (send key sequences), `send_text` (raw text without newline), `get_history` (one pane's conversation), `get_timeline` (status log), `push_subscribe` (register for web push)
 
 ## Deployment
 
-- Web app: Cloudflare Pages (push to main deploys `web/`)
+- Web app: served by the relay itself at `/`; editing `web/` is the deploy
+- Remote access: Tailscale serve or funnel (see [docs/TAILSCALE.md](docs/TAILSCALE.md)), or a Cloudflare tunnel
 - Demo worker: `npx wrangler deploy` from `demo-worker/`
 - macOS app: `herdi-mac/build.sh` produces `dist/Herdi.app`
+
+## Status log
+
+The relay appends one JSON line per agent status change to
+`$HERDR_LOG_DIR/timeline.jsonl` (owner-only, capped at 500 entries, reloaded at
+startup). It holds metadata only — session, project, agent, pane, ISO
+timestamp, status. Prompts and pane output never go there.
