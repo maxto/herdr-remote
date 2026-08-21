@@ -1454,3 +1454,61 @@ class TimelineDeliveryTests(unittest.TestCase):
 
         self.assertEqual(ws.sent, [])
         self.assertEqual(getattr(ws, "closed", None), (1008, "Unauthorized"))
+
+
+class FinishedWorkNotificationTests(unittest.TestCase):
+    """Finished work is worth a push; a relay restart is not.
+
+    With an empty status map every agent looks like it just changed, so the
+    first pass after startup must seed silently or a restart wakes the phone
+    once per finished agent.
+    """
+
+    AGENT = {
+        "pane_id": "crm:w1:p1",
+        "session_name": "crm",
+        "project": "crm",
+        "agent": "claude",
+        "status": "idle",
+        "host": "local",
+    }
+
+    @contextmanager
+    def relay_polling(self, *statuses):
+        """Run one poll per status, with the outside world stubbed out."""
+        with loaded_relay() as relay:
+            pushes = mock.AsyncMock()
+            with mock.patch.object(relay, "broadcast", new=mock.AsyncMock()), \
+                 mock.patch.object(relay, "send_web_push", new=pushes), \
+                 mock.patch.object(relay, "update_pane_maps"), \
+                 mock.patch.object(relay, "read_pane", return_value="waiting for you"):
+                for status in statuses:
+                    with mock.patch.object(
+                        relay, "get_all_agents", return_value=[dict(self.AGENT, status=status)]
+                    ):
+                        asyncio.run(relay._poll_once())
+                yield relay, pushes
+
+    def test_the_first_pass_only_seeds(self):
+        with self.relay_polling("done") as (relay, pushes):
+            pushes.assert_not_awaited()
+            self.assertEqual(relay.timeline_entries, [])
+
+    def test_finishing_notifies_once(self):
+        with self.relay_polling("working", "done", "done") as (relay, pushes):
+            finished = [call for call in pushes.await_args_list
+                        if call.kwargs.get("tag") == "herdr-done" and call.kwargs.get("title")]
+            self.assertEqual(len(finished), 1)
+            self.assertIn("crm", finished[0].kwargs["title"])
+
+    def test_looking_at_it_clears_the_notification(self):
+        with self.relay_polling("working", "done", "idle") as (relay, pushes):
+            cleared = [call for call in pushes.await_args_list
+                       if call.kwargs.get("clear") and call.kwargs.get("tag") == "herdr-done"]
+            self.assertEqual(len(cleared), 1)
+
+    def test_waiting_and_finished_do_not_replace_each_other(self):
+        with self.relay_polling("working", "blocked", "done") as (relay, pushes):
+            tags = {call.kwargs.get("tag") for call in pushes.await_args_list}
+            self.assertIn("herdr-blocked", tags)
+            self.assertIn("herdr-done", tags)

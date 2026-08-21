@@ -83,6 +83,10 @@ TIMELINE_FILE = os.path.join(LOG_DIR, "timeline.jsonl")
 TIMELINE_LIMIT = 500
 timeline_entries = []
 
+# An empty status map makes every agent look like it just changed, so the first
+# pass after startup records the world as it found it and stays quiet.
+poll_seeded = False
+
 if RELAY_HOST not in {"127.0.0.1", "localhost", "::1"} and not AUTH_TOKEN:
     raise SystemExit("HERDR_RELAY_TOKEN is required when HERDR_RELAY_HOST binds beyond loopback")
 
@@ -313,7 +317,8 @@ def _save_push_subs():
         json.dump(push_subscriptions, f)
 
 
-async def send_web_push(title: str, body: str, url: str = "/", clear: bool = False):
+async def send_web_push(title: str, body: str, url: str = "/", clear: bool = False,
+                        tag: str = "herdr-blocked"):
     """Send push notification to all registered subscriptions.
     
     Uses collapse topic + TTL so offline devices get only the latest.
@@ -327,10 +332,12 @@ async def send_web_push(title: str, body: str, url: str = "/", clear: bool = Fal
         log.warning("pywebpush not installed, skipping push")
         return
     if clear:
-        payload = json.dumps({"type": "clear", "tag": "herdr-blocked"})
+        payload = json.dumps({"type": "clear", "tag": tag})
     else:
-        payload = json.dumps({"title": title, "body": body, "url": url})
-    headers = {"Topic": "herdr-herd", "TTL": "21600"}  # 6h TTL, collapse key
+        payload = json.dumps({"title": title, "body": body, "url": url, "tag": tag})
+    # The tag is also the collapse key: an agent waiting for an answer and one
+    # that has finished are different news and must not overwrite each other.
+    headers = {"Topic": tag, "TTL": "21600"}  # 6h TTL
     dead = []
     for i, sub in enumerate(push_subscriptions):
         try:
@@ -921,8 +928,10 @@ async def _poll_once():
         update_pane_maps(agents)
         # Always broadcast (even empty list) so clients stay in sync
         await broadcast({"type": "agents", "agents": agents})
+        global poll_seeded
         for a in agents:
             pid, status = a["pane_id"], a["status"]
+            previous = last_statuses.get(pid)
             if status == "blocked":
                 content = read_pane(pid, **agent_target(a))
                 message = blocked_message(
@@ -948,12 +957,25 @@ async def _poll_once():
                         url=f"/?pane={pid}",
                     )
             else:
-                if last_statuses.get(pid) == "blocked":
-                    await send_web_push("", "", clear=True)
+                if previous == "blocked":
+                    await send_web_push("", "", clear=True, tag="herdr-blocked")
                 last_blocked_prompts.pop(pid, None)
-            if last_statuses.get(pid) != status:
+                # "done" means finished and not yet looked at: herdr moves the
+                # pane back to idle the moment someone opens it, which is also
+                # when the notification stops being true.
+                if status == "done" and previous != "done" and poll_seeded:
+                    await send_web_push(
+                        title=f"\u2705 {a['project']} finished",
+                        body=f"{a['agent']} is done and waiting to be seen.",
+                        url=f"/?pane={pid}",
+                        tag="herdr-done",
+                    )
+                elif previous == "done" and status != "done":
+                    await send_web_push("", "", clear=True, tag="herdr-done")
+            if poll_seeded and previous != status:
                 record_status_change(a, status)
             last_statuses[pid] = status
+        poll_seeded = True
 async def event_push():
     while True:
         event = await event_queue.get()
