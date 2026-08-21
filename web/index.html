@@ -191,10 +191,10 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
   </div>
 
   <div class="setting-group">
-    <label>Saved Sessions</label>
+    <label>Saved Relays</label>
     <div id="sessionList" style="margin:8px 0"></div>
-    <button onclick="saveCurrentSession()" style="font-size:0.8rem;padding:8px 12px">+ Save Current Session</button>
-    <div class="hint">Switch between multiple herdr relays.</div>
+    <button onclick="saveCurrentSession()" style="font-size:0.8rem;padding:8px 12px">+ Save Current Relay</button>
+    <div class="hint">Switch between relays on different machines. Every herdr session on a relay already shows up in one agent list.</div>
   </div>
 
   <div class="setting-group">
@@ -500,7 +500,7 @@ function renderSessions() {
   const sessions = getSessions();
   const el = document.getElementById('sessionList');
   if (!sessions.length) {
-    el.innerHTML = '<div style="font-size:0.75rem;color:var(--muted)">No saved sessions</div>';
+    el.innerHTML = '<div style="font-size:0.75rem;color:var(--muted)">No saved relays</div>';
     return;
   }
   const currentUrl = relayUrlFromStorage();
