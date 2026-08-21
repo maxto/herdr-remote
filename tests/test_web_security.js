@@ -191,3 +191,15 @@ assert.equal(droppedHarness.scheduledReconnects.length, 1);
 assert.equal(droppedHarness.statuses.at(-1), 'disconnected');
 
 console.log('admission handling: ok');
+
+// --- HTTP base for relay endpoints --------------------------------------
+// A relay URL the operator pasted may carry a trailing slash; concatenating
+// onto it produces a double slash the relay reads as a different path.
+
+assert.equal(security.relayHttpBase('wss://relay.example/'), 'https://relay.example');
+assert.equal(security.relayHttpBase('wss://relay.example'), 'https://relay.example');
+assert.equal(security.relayHttpBase('ws://127.0.0.1:8375//'), 'http://127.0.0.1:8375');
+assert.equal(security.relayHttpBase('wss://relay.example/base/'), 'https://relay.example/base');
+assert.equal(security.relayHttpBase(''), '');
+
+console.log('relay http base: ok');

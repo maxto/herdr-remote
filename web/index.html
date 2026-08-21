@@ -1505,9 +1505,13 @@ async function togglePush() {
   } else {
     // Subscribe
     try {
-      const relayUrl = relayUrlFromStorage();
-      const httpUrl = relayUrl.replace('wss://', 'https://').replace('ws://', 'http://');
+      const httpUrl = HerdrSecurity.relayHttpBase(relayUrlFromStorage());
       const resp = await fetch(httpUrl + '/api/vapid-public-key');
+      if (!resp.ok) {
+        document.getElementById('pushStatus').textContent =
+          `Relay refused the key request (HTTP ${resp.status})`;
+        return;
+      }
       const {publicKey} = await resp.json();
       if (!publicKey) {
         document.getElementById('pushStatus').textContent = 'VAPID key not configured on relay';

@@ -302,6 +302,14 @@ class RelayAuthenticationTests(unittest.TestCase):
                 self.assertEqual(response.status_code, 200, path)
                 self.assertIn(content_type, response.headers["Content-Type"], path)
 
+    def test_duplicate_slashes_do_not_hide_public_paths(self):
+        """A client that keeps a trailing slash still asks for the same file."""
+        with loaded_relay(relay_token="secret") as relay:
+            for path in ("//api/vapid-public-key", "//index.html", "//security.js"):
+                request = types.SimpleNamespace(path=path, headers=_Headers({}))
+                response = asyncio.run(relay.process_request(None, request))
+                self.assertEqual(response.status_code, 200, path)
+
     def test_documented_origin_variable_is_honoured(self):
         with loaded_relay(relay_token="secret", trusted_origins="https://dash.example") as relay:
             self.assertTrue(relay.origin_is_allowed("https://dash.example"))

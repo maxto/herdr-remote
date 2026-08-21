@@ -976,7 +976,9 @@ async def process_request(connection, request):
         "/sw.js", "/logo.svg", "/api/vapid-public-key",
         "/HackNerdFont-Regular.woff2", "/HackNerdFont-LICENSE.txt",
     }
-    request_path = (request.path or "/").split("?", 1)[0]
+    # A client that keeps a trailing slash sends "//api/...". It means the same
+    # file, so collapse repeats before deciding whether the path is public.
+    request_path = re.sub(r"/{2,}", "/", (request.path or "/").split("?", 1)[0]) or "/"
 
     upgrade = None
     origin = ""
@@ -1036,7 +1038,7 @@ async def process_request(connection, request):
             return Response(200, "OK", headers, b"ok\n")
 
     # Serve web app for GET / or GET /index.html
-    path = (request.path or "/").split("?")[0]
+    path = request_path
     if path in ("/", "/index.html"):
         web_dir = os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "web")
         index_path = os.path.join(web_dir, "index.html")

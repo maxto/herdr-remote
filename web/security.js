@@ -214,6 +214,17 @@
     };
   }
 
+  // Relay HTTP endpoints live next to the socket. Concatenating onto a URL the
+  // operator pasted with a trailing slash yields "//api/...", which the relay
+  // reads as a different, non-public path.
+  function relayHttpBase(relayUrl) {
+    if (!relayUrl) return '';
+    return relayUrl
+      .replace(/^wss:/i, 'https:')
+      .replace(/^ws:/i, 'http:')
+      .replace(/\/+$/, '');
+  }
+
   // The token is remembered for this device so the operator pastes it once.
   // It still never travels inside a URL: the handshake carries it instead.
   const RELAY_TOKEN_KEY = 'herdr_relay_token';
@@ -236,6 +247,7 @@
     createAuthenticatedConnection,
     forgetStoredRelayToken,
     persistRelayToken,
+    relayHttpBase,
     readStoredRelayToken,
     sanitizeSavedSessions,
     sanitizeRelayUrl,
