@@ -1512,3 +1512,36 @@ class FinishedWorkNotificationTests(unittest.TestCase):
             tags = {call.kwargs.get("tag") for call in pushes.await_args_list}
             self.assertIn("herdr-blocked", tags)
             self.assertIn("herdr-done", tags)
+
+
+class DiscoveryShutdownTests(unittest.TestCase):
+    """Announcing the relay on the LAN must never decide how it exits.
+
+    zeroconf's synchronous teardown times out when called from a running event
+    loop, and the exception escaping shutdown made systemd record a failure on
+    every ordinary restart — noise that would hide a real crash.
+    """
+
+    class _FailingZeroconf:
+        def __init__(self):
+            self.closed = False
+
+        def unregister_service(self, info):
+            raise RuntimeError("event loop blocked")
+
+        def close(self):
+            self.closed = True
+
+    def test_a_failed_unregister_still_closes_and_does_not_raise(self):
+        with loaded_relay() as relay:
+            zeroconf = self._FailingZeroconf()
+
+            relay.stop_mdns(zeroconf, object())
+
+            self.assertTrue(zeroconf.closed)
+
+    def test_discovery_can_be_turned_off(self):
+        """A relay reached over a private network has nothing to announce."""
+        with mock.patch.dict(os.environ, {"HERDR_MDNS": "0"}, clear=False):
+            with loaded_relay() as relay:
+                self.assertEqual(relay.start_mdns(), (None, None))

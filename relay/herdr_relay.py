@@ -1504,7 +1504,32 @@ class UDPPlugin(asyncio.DatagramProtocol):
             pass
 
 
+def stop_mdns(zc, info):
+    """Tear down discovery without ever raising.
+
+    zeroconf's synchronous API waits on its own event loop, and calling it while
+    the relay's loop is shutting down times out. That exception used to escape
+    main and exit non-zero, so every ordinary restart was recorded as a failure
+    — which is exactly the signal a real crash needs to stand out from.
+    """
+    try:
+        if info is not None:
+            zc.unregister_service(info)
+    except Exception as error:
+        log.warning("mDNS unregister failed: %s", error)
+    finally:
+        try:
+            zc.close()
+        except Exception as error:
+            log.warning("mDNS close failed: %s", error)
+
+
 def start_mdns():
+    # A relay reached over a private network or a tunnel has nobody to announce
+    # itself to on the local link.
+    if os.environ.get("HERDR_MDNS", "1").strip().lower() in {"0", "false", "no", "off"}:
+        log.info("mDNS disabled")
+        return None, None
     try:
         from zeroconf import Zeroconf, ServiceInfo
         import socket as sock_mod
@@ -1577,11 +1602,9 @@ async def main():
         if tasks:
             await asyncio.gather(*tasks, return_exceptions=True)
         if zc is not None:
-            try:
-                if info is not None:
-                    zc.unregister_service(info)
-            finally:
-                zc.close()
+            # In a worker thread: the synchronous teardown would otherwise block
+            # the loop it is being shut down from.
+            await asyncio.to_thread(stop_mdns, zc, info)
 
 
 if __name__ == "__main__":
