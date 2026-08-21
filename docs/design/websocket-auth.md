@@ -79,12 +79,10 @@ access rules.
 
 ## Origin policy
 
-`HERDR_RELAY_TRUSTED_ORIGINS` is a comma-separated set of exact browser origins.
-For this installation it will contain:
-
-```text
-https://herdr-remote-bfd.pages.dev
-```
+`HERDR_RELAY_TRUSTED_ORIGINS` is a comma-separated set of exact browser
+origins; `HERDR_TRUSTED_ORIGINS` is accepted as an alias. It holds whichever
+front ends the operator actually serves — a Pages deployment, a Tailscale
+hostname, or both.
 
 During a WebSocket upgrade:
 
@@ -103,14 +101,17 @@ another website from initiating an authenticated browser session.
 ### Web
 
 - Remove the executable import from `esm.sh`; cue calls remain optional no-ops.
-- Delete any legacy `herdr_relay_token` value from `localStorage` on startup.
-- Hold the submitted token in a module-scoped in-memory variable only.
-- Clear the password input immediately after copying its value to memory.
 - Open the clean relay URL without a token query.
 - Send the versioned `auth` message on `open` and mark the UI live only after a
   successful `auth_result`.
-- Clear the in-memory token when changing sessions or selecting the demo.
-- Require token entry again after refresh or browser restart.
+- Forget the stored token when changing sessions or selecting the demo.
+
+The original design held the token in memory only and required re-entry after
+every reload. That proved unusable on a phone: neither autofill nor the
+Credential Management API filled the field in practice, so every glance at the
+dashboard began by pasting 64 characters. The token is now remembered for the
+device under `herdr_relay_token`. It still never appears in a URL — the
+handshake carries it — which was the exposure this work set out to remove.
 
 Saved session records continue to contain only a display name and relay URL.
 
@@ -188,26 +189,11 @@ Client tests cover:
 The project test suite, syntax checks, and relevant installer tests must pass
 before commit or push.
 
-## Rollout
-
-1. Add failing protocol, client, migration, origin, and asset tests.
-2. Implement the relay gate and Python client helper.
-3. Migrate web, Telegram, TUI, and installer configuration.
-4. Run focused tests and the complete project suite.
-5. Commit only related files and push only to `maxto/herdr-remote` on
-   `feat/multi-session-local`.
-6. Verify the automatic Pages deployment serves the new frontend.
-7. Add the exact Pages origin to the local relay configuration and restart the
-   user relay service without exposing or rotating the token.
-8. Re-run local authenticated checks.
-9. Ask for a separate explicit authorization before starting any public tunnel.
-
 ## Success criteria
 
 - No maintained client sends a relay token in a URL.
-- No web token survives a page refresh.
 - An unauthenticated connection receives no agent data and cannot run commands.
-- The personal Pages origin authenticates successfully.
+- A configured browser origin authenticates successfully.
 - A different browser origin is rejected before WebSocket upgrade.
 - Telegram and TUI pass their existing behavioral tests with token auth enabled.
 - The full project suite passes and the deployed frontend contains no executable
