@@ -133,14 +133,26 @@ class ConnectButtonTest(unittest.TestCase):
     def test_the_button_is_addressable(self):
         self.assertIn('id="connectButton"', self.source)
 
-    def test_status_changes_drive_the_button(self):
-        body = self.source[self.source.index("function setStatus("):]
-        body = body[:body.index("\nfunction ")]
+    def test_the_button_reports_every_state(self):
+        body = self.source[self.source.index("function updateConnectButton("):]
+        body = body[:body.index("\nfor (const field")]
 
-        self.assertIn("connectButton", body)
-        for label in ("Connected", "Reconnect", "Connecting"):
+        for label in ("Apply", "Connected", "Reconnect", "Connecting"):
             self.assertIn(label, body, label)
         self.assertIn("disabled", body)
+
+    def test_editing_a_field_reopens_the_button(self):
+        """A press only matters when there is something unapplied to commit."""
+        self.assertIn("settingsDirty = true", self.source)
+        self.assertIn("settingsDirty = false", self.source)
+        self.assertIn("addEventListener('input'", self.source)
+
+    def test_status_is_readable_without_relying_on_colour(self):
+        card = self.source[self.source.index("function agentCard("):]
+        card = card[:card.index("\nfunction ")]
+
+        self.assertNotIn("status-pill", card)
+        self.assertIn("${escAttr(a.status)}", card)
 
 
 class StatusColourTest(unittest.TestCase):

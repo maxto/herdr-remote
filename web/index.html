@@ -77,7 +77,6 @@ body { font-family: -apple-system, system-ui, -webkit-system-font, sans-serif; b
 .agent.status-working { border-left-color: var(--blue); }
 .agent.status-done { border-left-color: var(--green); }
 .agent.status-idle { border-left-color: var(--muted); }
-.status-pill { font-size: 0.6rem; font-weight: 700; letter-spacing: 0.06em; text-transform: uppercase; padding: 2px 8px; border-radius: 999px; white-space: nowrap; border: 1px solid currentColor; background: color-mix(in srgb, currentColor 12%, transparent); }
 .workspace-card { border-color: color-mix(in srgb, var(--text) 10%, transparent); }
 .count-pill { display: inline-block; padding: 1px 6px; border-radius: 4px; background: color-mix(in srgb, var(--text) 8%, transparent); font-size: 0.65rem; }
 .chip-strip { display: flex; align-items: center; gap: 8px; overflow-x: auto; padding: 8px 12px; scrollbar-width: none; -webkit-overflow-scrolling: touch; }
@@ -458,6 +457,7 @@ function saveAndConnect() {
   document.getElementById('relayUrl').value = url;
   relayToken = document.getElementById('relayToken').value.trim();
   HerdrSecurity.persistRelayToken(localStorage, relayToken);
+  settingsDirty = false;
   connect();
   toggleSettings();
 }
@@ -487,17 +487,41 @@ function setStatus(s) {
   dot.style.background = s==='connected'?'var(--live)':pending?'var(--orange)':'var(--red)';
   label.textContent = labels[s] || 'offline';
   label.style.color = s==='connected'?'var(--live)':pending?'var(--orange)':'var(--red)';
-  // Connect is the only control that says whether the settings took effect, so
-  // it has to stop reading like nothing happened once they did.
-  const connectButton = document.getElementById('connectButton');
-  if (connectButton) {
-    const settled = s === 'connected';
-    connectButton.textContent = settled ? 'Connected'
-      : pending ? 'Connecting…'
-      : relayUrlFromStorage() ? 'Reconnect' : 'Connect';
-    connectButton.disabled = settled || pending;
-  }
+  updateConnectButton();
   if (s === 'unauthorized') showTokenRejected();
+}
+
+// The button commits the settings form; it never was a connect/disconnect
+// switch. A dropped link reconnects on its own, so the only moments worth a
+// press are unapplied edits and a rejection, which stops the retry loop by
+// design. Say which of those is true rather than reading Connect forever.
+let settingsDirty = false;
+
+function updateConnectButton() {
+  const button = document.getElementById('connectButton');
+  if (!button) return;
+
+  const pending = connectionStatus === 'connecting' || connectionStatus === 'authenticating';
+  if (settingsDirty) {
+    button.textContent = 'Apply';
+    button.disabled = false;
+  } else if (pending) {
+    button.textContent = 'Connecting…';
+    button.disabled = true;
+  } else if (connectionStatus === 'connected') {
+    button.textContent = 'Connected';
+    button.disabled = true;
+  } else {
+    button.textContent = relayUrlFromStorage() ? 'Reconnect' : 'Connect';
+    button.disabled = false;
+  }
+}
+
+for (const field of ['relayUrl', 'relayToken']) {
+  document.getElementById(field).addEventListener('input', () => {
+    settingsDirty = true;
+    updateConnectButton();
+  });
 }
 
 function showTokenRejected() {
@@ -846,8 +870,7 @@ function agentCard(a) {
   const ariaSession = needsSessionLabel(a) ? `session ${a.session_name}, ` : '';
   return `<div class="agent status-${escAttr(a.status)}${a.status==='blocked'?' blocked':''}" role="button" tabindex="0" aria-label="${ariaSession}${label}, ${a.status}" data-pane-id="${escAttr(a.pane_id)}" data-agent-name="${escAttr(label)}" onclick="openTerminal(this.dataset.paneId)" onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();openTerminal(this.dataset.paneId)}">
     <span class="dot${pulseClass}" style="background:${color}" aria-hidden="true"></span>
-    <div class="info"><div class="project">${sessionBadge(a)}${label}${host}</div><div class="meta">${a.agent} · ${paneRef}${cwd}</div></div>
-    <span class="status-pill" style="color:${color}" aria-hidden="true">${escAttr(a.status)}</span>
+    <div class="info"><div class="project">${sessionBadge(a)}${label}${host}</div><div class="meta">${a.agent} · ${escAttr(a.status)} · ${paneRef}${cwd}</div></div>
     <span style="color:var(--muted);font-size:1.2rem" aria-hidden="true">›</span>
   </div>`;
 }
