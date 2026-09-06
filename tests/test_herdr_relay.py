@@ -1,4 +1,5 @@
 import asyncio
+from html.parser import HTMLParser
 import importlib.util
 import json
 import logging
@@ -6,6 +7,7 @@ import os
 from pathlib import Path
 import subprocess
 import shutil
+import struct
 import sys
 import tempfile
 import threading
@@ -14,6 +16,7 @@ import unittest
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from unittest import mock
+from urllib.parse import urljoin, urlsplit
 import uuid
 
 
@@ -339,6 +342,67 @@ class RelayAuthenticationTests(unittest.TestCase):
                 self.assertTrue(relay.origin_is_allowed("http://localhost:5173"))
                 self.assertTrue(relay.origin_is_allowed("http://127.0.0.1:8375"))
                 self.assertFalse(relay.origin_is_allowed("https://evil.example"))
+
+
+class RelayInstallationTests(unittest.TestCase):
+    """Chrome must fetch a complete manifest and real icons before login."""
+
+    def test_dashboard_serves_an_installable_standalone_app(self):
+        class ManifestLinkCollector(HTMLParser):
+            href = None
+
+            def handle_starttag(self, tag, attrs):
+                attrs = dict(attrs)
+                if tag == "link" and attrs.get("rel") == "manifest":
+                    self.href = attrs.get("href")
+
+        with loaded_relay(
+            relay_token="installation-test-secret", trusted_origins="https://dashboard.example"
+        ) as relay:
+            def get(path):
+                request = types.SimpleNamespace(path=path, headers=_Headers({}))
+                response = asyncio.run(relay.process_request(None, request))
+                self.assertEqual(response.status_code, 200, path)
+                return response
+
+            page = get("/")
+            links = ManifestLinkCollector()
+            links.feed(page.body.decode())
+            self.assertTrue(links.href, "the dashboard needs a manifest link")
+            manifest_url = urljoin("https://dashboard.example/", links.href)
+            self.assertEqual(urlsplit(manifest_url).netloc, "dashboard.example")
+            response = get(urlsplit(manifest_url).path)
+            self.assertIn("application/manifest+json", response.headers["Content-Type"])
+            self.assertEqual(response.headers["Cache-Control"], "no-cache")
+            manifest = json.loads(response.body)
+            self.assertTrue(manifest.get("name") or manifest.get("short_name"))
+            self.assertEqual(manifest.get("display"), "standalone")
+            for field in ("id", "start_url", "scope"):
+                self.assertEqual(manifest.get(field), "/", field)
+            self.assertIn("text/html", get(manifest["start_url"]).headers["Content-Type"])
+
+            sizes = set()
+            for icon in manifest.get("icons", []):
+                icon_url = urljoin(manifest_url, icon["src"])
+                self.assertEqual(urlsplit(icon_url).netloc, "dashboard.example")
+                response = get(urlsplit(icon_url).path)
+                self.assertEqual(response.headers["Content-Type"], "image/png")
+                self.assertEqual(response.body[:8], b"\x89PNG\r\n\x1a\n")
+                width, height = struct.unpack(">II", response.body[16:24])
+                size = f"{width}x{height}"
+                self.assertIn(size, icon["sizes"].split())
+                sizes.add(size)
+            self.assertTrue({"192x192", "512x512"}.issubset(sizes), sizes)
+
+    def test_installation_assets_do_not_expose_other_files(self):
+        with loaded_relay(
+            relay_token="installation-test-secret", trusted_origins="https://dashboard.example"
+        ) as relay:
+            for path in ("/icons/../security.js", "/icons/private.png", "/manifest.json"):
+                with self.subTest(path=path):
+                    request = types.SimpleNamespace(path=path, headers=_Headers({}))
+                    response = asyncio.run(relay.process_request(None, request))
+                    self.assertEqual(response.status_code, 401)
 
 
 class RelayConfigurationTests(unittest.TestCase):

@@ -1057,10 +1057,17 @@ async def process_request(connection, request):
     # The dashboard shell loads before the browser holds a token, so demanding
     # one here would force the secret into the page URL. Agent state stays
     # behind the WebSocket gate; these files carry none of it.
+    static_files = {
+        "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json", "no-cache"),
+        "/icons/icon-192.png": ("icons/icon-192.png", "image/png", "no-cache"),
+        "/icons/icon-512.png": ("icons/icon-512.png", "image/png", "no-cache"),
+        "/HackNerdFont-Regular.woff2": ("HackNerdFont-Regular.woff2", "font/woff2", "public, max-age=31536000, immutable"),
+        "/HackNerdFont-LICENSE.txt": ("HackNerdFont-LICENSE.txt", "text/plain; charset=utf-8", "public, max-age=31536000, immutable"),
+    }
     public_paths = {
         "/", "/index.html", "/security.js",
         "/sw.js", "/logo.svg", "/api/vapid-public-key",
-        "/HackNerdFont-Regular.woff2", "/HackNerdFont-LICENSE.txt",
+        *static_files,
     }
     # A client that keeps a trailing slash sends "//api/...". It means the same
     # file, so collapse repeats before deciding whether the path is public.
@@ -1183,12 +1190,8 @@ async def process_request(connection, request):
             headers = Headers([("Content-Type", "image/svg+xml")])
             return Response(200, "OK", headers, body)
 
-    static_files = {
-        "/HackNerdFont-Regular.woff2": ("HackNerdFont-Regular.woff2", "font/woff2"),
-        "/HackNerdFont-LICENSE.txt": ("HackNerdFont-LICENSE.txt", "text/plain; charset=utf-8"),
-    }
     if path in static_files:
-        filename, content_type = static_files[path]
+        filename, content_type, cache_control = static_files[path]
         asset_path = os.path.join(
             os.path.dirname(os.path.abspath(__file__)), "..", "web", filename
         )
@@ -1197,7 +1200,7 @@ async def process_request(connection, request):
                 body = f.read()
             headers = Headers([
                 ("Content-Type", content_type),
-                ("Cache-Control", "public, max-age=31536000, immutable"),
+                ("Cache-Control", cache_control),
             ])
             return Response(200, "OK", headers, body)
 

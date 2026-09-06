@@ -26,6 +26,11 @@ The relay serves the dashboard itself at `/`, so one address covers both the
 page and the WebSocket, and **saving a file in `web/` is the deploy**. There is
 no build step and no Cloudflare Pages any more.
 
+The dashboard has a standalone web app manifest and PNG icons for installation
+from Android Chrome. The relay must be restarted after pulling the change that
+adds their HTTP routes; later edits to the assets are read on request. See
+the Android installation steps in `docs/TAILSCALE.md`.
+
 `docs/TAILSCALE.md` covers serve versus funnel and the node attribute that gates
 funnel.
 

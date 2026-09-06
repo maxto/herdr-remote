@@ -65,6 +65,27 @@ the socket. Open `https://<machine>.<tailnet>.ts.net` in a browser: the relay
 URL fills itself in, and only the token has to be pasted. The browser remembers
 the token for that address; it never appears in a URL.
 
+## Install on Android
+
+After updating the repository, restart `herdr-relay.service` to load the routes
+that serve the app manifest and icons. Updating only the HTML is not enough
+when the running relay predates those routes.
+
+Open your own dashboard's HTTPS address in Chrome, reload it, then choose
+**Add to home screen → Install** from the three-dot menu. Launch **Herdr** from
+the new icon: it opens in its own window without Chrome's address bar. Android's
+status and navigation bars may remain visible.
+
+An older home-screen shortcut may still open a Chrome tab. Install from the
+updated page and use the newly installed app; the old shortcut can then be
+removed. If Chrome offers only a shortcut, verify that `/manifest.webmanifest`,
+`/icons/icon-192.png` and `/icons/icon-512.png` return `200` on the same HTTPS
+address without credentials. The demo linked in the upstream README is a
+different deployment and does not receive this fork's changes.
+
+The installation reuses the existing dashboard and relay. It still needs a
+network connection; agent output is not cached for offline use.
+
 ## Why the origin still matters
 
 A token alone does not identify the caller. A browser attaches a stored token
