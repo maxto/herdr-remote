@@ -76,6 +76,11 @@ Open your own dashboard's HTTPS address in Chrome, reload it, then choose
 the new icon: it opens in its own window without Chrome's address bar. Android's
 status and navigation bars may remain visible.
 
+For more space, tap the fullscreen icon in the dashboard header. Tap it again
+to leave fullscreen; the button also updates if Android exits the mode. The
+control is shown only when the browser supports fullscreen. System gestures
+and the keyboard can still bring Android controls back into view.
+
 An older home-screen shortcut may still open a Chrome tab. Install from the
 updated page and use the newly installed app; the old shortcut can then be
 removed. If Chrome offers only a shortcut, verify that `/manifest.webmanifest`,

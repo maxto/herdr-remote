@@ -83,6 +83,10 @@ echo "10b. web app strips URL and saved-session tokens"
 node "$DIR/tests/test_web_security.js"
 assert_eq "$?" "0" "web token handling"
 
+echo "10c. web app fullscreen controls"
+node "$DIR/tests/test_web_fullscreen.js"
+assert_eq "$?" "0" "fullscreen controls"
+
 # --- macOS app ---
 echo ""
 echo "=== macOS app ==="
