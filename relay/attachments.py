@@ -124,6 +124,40 @@ def decode_attachment(attachment):
     return data, extension
 
 
+class UploadQuota:
+    """Budget for uploads that are still in flight.
+
+    Checking free space and then taking it are one step, not two: without that,
+    several uploads starting together all pass the same check and jointly
+    overrun the budget.
+    """
+
+    def __init__(self, *, max_pending_bytes):
+        self.max_pending_bytes = max_pending_bytes
+        self._lock = threading.Lock()
+        self._reserved = {}
+        self._next_token = 0
+
+    @property
+    def pending_bytes(self):
+        with self._lock:
+            return sum(self._reserved.values())
+
+    def reserve(self, size):
+        with self._lock:
+            if sum(self._reserved.values()) + size > self.max_pending_bytes:
+                raise AttachmentError("The relay is busy with other uploads; try again shortly")
+            self._next_token += 1
+            token = self._next_token
+            self._reserved[token] = size
+            return token
+
+    def release(self, token):
+        """Idempotent: an upload may be abandoned and then cleaned up again."""
+        with self._lock:
+            self._reserved.pop(token, None)
+
+
 class UploadSink:
     """Collects one upload's chunks in a temporary beside its destination.
 

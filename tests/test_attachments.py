@@ -6,6 +6,7 @@ from pathlib import Path
 import stat
 import struct
 import tempfile
+import threading
 import unittest
 from unittest import mock
 import zlib
@@ -273,3 +274,47 @@ class UploadSinkTests(unittest.TestCase):
         sink.write(0, b"ab")
         sink.abort()
         self.assertFalse(sink.temp_path.exists())
+
+
+class UploadQuotaTests(unittest.TestCase):
+    """Concurrent uploads must not all pass the same check at the same instant."""
+
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location("test_attachment_quota", MODULE_PATH)
+        self.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.module)
+
+    def test_pending_reservations_are_atomic_under_contention(self):
+        mib = 1024 * 1024
+        quota = self.module.UploadQuota(max_pending_bytes=10 * mib)
+        barrier = threading.Barrier(5)
+
+        def reserve():
+            barrier.wait()
+            try:
+                return quota.reserve(4 * mib)
+            except self.module.AttachmentError:
+                return None
+
+        with ThreadPoolExecutor(max_workers=5) as pool:
+            tokens = list(pool.map(lambda _: reserve(), range(5)))
+
+        granted = [t for t in tokens if t is not None]
+        self.assertEqual(len(granted), 2, "10 MiB holds exactly two 4 MiB uploads")
+        self.assertEqual(quota.pending_bytes, 8 * mib)
+        for token in granted:
+            quota.release(token)
+        self.assertEqual(quota.pending_bytes, 0)
+
+    def test_releasing_twice_does_not_free_space_twice(self):
+        quota = self.module.UploadQuota(max_pending_bytes=1000)
+        token = quota.reserve(400)
+        quota.release(token)
+        quota.release(token)
+        self.assertEqual(quota.pending_bytes, 0)
+
+    def test_a_reservation_larger_than_the_whole_budget_is_refused(self):
+        quota = self.module.UploadQuota(max_pending_bytes=100)
+        with self.assertRaises(self.module.AttachmentError):
+            quota.reserve(101)
+        self.assertEqual(quota.pending_bytes, 0)
