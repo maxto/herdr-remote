@@ -23,7 +23,7 @@
 
 ## Stato di partenza
 
-Il working tree ha gli allegati **rimossi** (modifica non committata), ma `HEAD` li contiene: `git show HEAD:relay/attachments.py` è il punto di partenza da recuperare, non da riscrivere. Contiene già quote, scrittura atomica, rifiuto dei symlink e pulizia su fallimento parziale, tutto coperto da test.
+La rimozione degli allegati è **committata** in `fe8fc34`. Il punto di partenza da recuperare è `b2b7640`, l'ultimo commit che li conteneva: non c'è nulla da riscrivere da zero. Contiene già quote, scrittura atomica, rifiuto dei symlink e pulizia su fallimento parziale, tutto coperto da test.
 
 ## Verifica ricorrente
 
@@ -41,15 +41,15 @@ HERDR_BROWSER_TESTS=1 tests/run.sh    # dal Task 7 in poi
 Col chunking i due momenti si allontanano: al `begin` non esiste ancora un byte, al `commit` c'è un file completo. `decode_attachment` di `HEAD` fa entrambe le cose su un blob unico e va spezzato.
 
 **Files:**
-- Create: `relay/attachments.py` (da `git show HEAD:relay/attachments.py`)
-- Create: `tests/test_attachments.py` (da `git show HEAD:tests/test_attachments.py`)
+- Create: `relay/attachments.py` (da `b2b7640`, l'ultimo commit prima della rimozione)
+- Create: `tests/test_attachments.py` (da `git show b2b7640:tests/test_attachments.py`)
 
 - [ ] **Step 1: recuperare i file da HEAD**
 
 ```bash
 cd /home/maxto/projects/personal/herdr-remote
-git show HEAD:relay/attachments.py > relay/attachments.py
-git show HEAD:tests/test_attachments.py > tests/test_attachments.py
+git show b2b7640:relay/attachments.py > relay/attachments.py
+git show b2b7640:tests/test_attachments.py > tests/test_attachments.py
 ```
 
 - [ ] **Step 2: verificare che i test recuperati passino**
