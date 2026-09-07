@@ -5,6 +5,7 @@ Usage: uv run --with playwright python tests/check_terminal_layout.py
 """
 
 import asyncio
+import base64
 import json
 from pathlib import Path
 import tempfile
@@ -63,6 +64,10 @@ async def main():
                 assert bounds['x'] + bounds['width'] <= view['x'] + view['width'], bounds
 
             await check_reading_view()
+            cdp = await context.new_cdp_session(page)
+            await cdp.send('Emulation.setSafeAreaInsetsOverride', {'insets': {'top': 32}})
+            await check_reading_view()
+            await cdp.send('Emulation.setSafeAreaInsetsOverride', {'insets': {'top': 0}})
             await page.get_by_role('button', name='Show terminal controls', exact=True).click()
             await page.evaluate("""() => handleMessage({type: 'pane_content', pane_id: 'demo:workspace:p1',
               content: '\\x1b[32mTerminale di prova\\x1b[0m\\n' +
@@ -139,9 +144,21 @@ async def main():
               agents[0].options = Array.from({length: 12}, (_, i) => `Option ${i + 1}`);
               openTerminal('demo:workspace:p1', false);
             }""")
-            await page.locator('.term-input button[aria-label="Keys"]').click()
+            await page.get_by_role('button', name='Keys', exact=True).click()
             await check_layout(852, 190, "keyboard plus action keys")
             await page.locator('#termInput').fill('draft command')
+            assert not await page.locator('#termKeys').is_visible()
+            for mode, panel in [('Keys', '#keysPad'), ('123', '#digitsPad'), ('Commands', '#quickDock')]:
+                await page.get_by_role('button', name=mode, exact=True).click()
+                assert await page.locator(panel).is_visible(), mode
+                assert not await page.evaluate("document.activeElement.id === 'termInput'")
+                panel_box = await page.locator('#termKeys' if mode != 'Commands' else '#quickDock').bounding_box()
+                assert panel_box['height'] >= 26, (mode, panel_box)
+                assert panel_box['y'] + panel_box['height'] <= 191, (mode, panel_box)
+            await page.get_by_role('button', name='ABC', exact=True).click()
+            assert await page.evaluate("document.activeElement.id === 'termInput'")
+            assert not await page.locator('#termKeys').is_visible()
+            assert not await page.locator('#quickDock').is_visible()
             await page.get_by_role('button', name='Hide terminal controls', exact=True).click()
             await check_reading_view()
             assert not await page.evaluate("document.activeElement.id === 'termInput'")
@@ -152,7 +169,8 @@ async def main():
             assert not await page.locator('#termKeys').is_visible()
             await page.evaluate("openTerminal('demo:workspace:p1', false)")
             assert await page.locator('#termInput').is_visible()
-            await page.locator('.term-input button[aria-label="Commands"]').click()
+            await page.get_by_role('button', name='Commands', exact=True).click()
+            await page.get_by_role('button', name='Agent commands', exact=True).click()
             panel = await page.locator('#cmdPalette > div').last.bounding_box()
             assert panel["y"] >= 0 and panel["y"] + panel["height"] <= 191, panel
             await page.locator('#cmdPalette button').click()
@@ -161,6 +179,83 @@ async def main():
             await page.wait_for_function("!document.fullscreenElement")
             await page.locator('[data-pane-id="demo:workspace:p1"]').click()
             await check_reading_view()
+            await page.get_by_role('button', name='Show terminal controls', exact=True).click()
+            await page.evaluate("""() => {
+              agents[0].status = 'working';
+              window.sentMessages = [];
+              ws = {readyState: 1, send(raw) { window.sentMessages.push(JSON.parse(raw)); }};
+            }""")
+            png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=')
+            picker = page.locator('#attachmentInput')
+            await picker.set_input_files({'name': 'notes.txt', 'mimeType': 'text/plain', 'buffer': b'not an image'})
+            assert 'PNG, JPEG or WebP' in await page.locator('#composerStatus').inner_text()
+            assert not await page.locator('#attachmentPreview').is_visible()
+            await picker.set_input_files({'name': 'too-large.png', 'mimeType': 'image/png',
+                                          'buffer': b'x' * (5 * 1024 * 1024 + 1)})
+            assert 'up to 5 MiB' in await page.locator('#composerStatus').inner_text()
+            assert not await page.locator('#attachmentPreview').is_visible()
+            await picker.set_input_files({'name': 'screenshot.png', 'mimeType': 'image/png', 'buffer': png})
+            assert await page.locator('#attachmentPreview').is_visible()
+            await page.get_by_role('button', name='Remove image', exact=True).click()
+            assert not await page.locator('#attachmentPreview').is_visible()
+            await picker.set_input_files({'name': 'screenshot.png', 'mimeType': 'image/png', 'buffer': png})
+            await page.locator('#termInput').fill('Read this screenshot')
+            await check_layout(852, 190, 'image with keyboard space')
+            await page.evaluate('ws = null')
+            await page.evaluate("sendText()")
+            assert 'Not connected' in await page.locator('#composerStatus').inner_text()
+            assert await page.locator('#attachmentPreview').is_visible()
+            await page.evaluate("""() => {
+              ws = {readyState: 1, send(raw) { window.sentMessages.push(JSON.parse(raw)); }};
+            }""")
+            await page.get_by_role('button', name='Send', exact=True).click()
+            await page.wait_for_function("sentMessages.filter(m => m.type === 'send_attachment').length === 1")
+            requests = await page.evaluate("sentMessages.filter(m => m.type === 'send_attachment')")
+            assert len(requests) == 1, requests
+            request = requests[0]
+            assert request['pane_id'] == 'demo:workspace:p1'
+            assert request['text'] == 'Read this screenshot'
+            assert base64.b64decode(request['attachment']['data']) == png
+            assert not await page.evaluate("sentMessages.some(m => m.type === 'send_keys')")
+            assert await page.get_by_role('button', name='Send', exact=True).is_disabled()
+            await page.evaluate("sendText()")
+            assert len(await page.evaluate("sentMessages.filter(m => m.type === 'send_attachment')")) == 1
+            await page.evaluate("id => handleMessage({type:'error', request_id:id, message:'Synthetic delivery failure'})", request['request_id'])
+            assert await page.locator('#attachmentPreview').is_visible()
+            assert await page.locator('#termInput').input_value() == 'Read this screenshot'
+            assert 'Synthetic delivery failure' in await page.locator('#composerStatus').inner_text()
+            await check_layout(852, 190, 'image error with keyboard space')
+            await page.screenshot(path=str(screenshots / 'image-error-keyboard.png'))
+            assert await page.locator('#attachmentPreview').is_visible()
+            assert not await page.get_by_role('button', name='Send', exact=True).is_disabled()
+            # The dashboard's real connection controller may update the global
+            # socket while this long synthetic test changes viewport/fullscreen.
+            # Reinstall the recording socket before exercising the retry.
+            await page.evaluate("""() => {
+              ws = {readyState: 1, send(raw) { window.sentMessages.push(JSON.parse(raw)); }};
+            }""")
+            await page.get_by_role('button', name='Send', exact=True).click()
+            await page.wait_for_function("sentMessages.filter(m => m.type === 'send_attachment').length === 2")
+            retries = await page.evaluate("sentMessages.filter(m => m.type === 'send_attachment')")
+            retry_state = {
+                'requests': retries,
+                'status': await page.locator('#composerStatus').inner_text(),
+                'activePane': await page.evaluate('activePane'),
+                'disabled': await page.get_by_role('button', name='Send', exact=True).is_disabled(),
+            }
+            assert len(retries) == 2, retry_state
+            latest = retries[-1]
+            # A result for another pane must not clear the current draft.
+            await page.evaluate("openTerminal('demo:workspace:p2')")
+            await page.get_by_role('button', name='Show terminal controls', exact=True).click()
+            assert not await page.locator('#attachmentPreview').is_visible()
+            await page.locator('#termInput').fill('Other pane draft')
+            handled = await page.evaluate("id => TerminalAttachments.handleMessage({type:'command_result', command:'send_attachment', request_id:id, ok:true})", latest['request_id'])
+            assert handled, latest
+            assert await page.locator('#termInput').input_value() == 'Other pane draft'
+            await page.evaluate("openTerminal('demo:workspace:p1', false)")
+            assert not await page.locator('#attachmentPreview').is_visible()
+            assert await page.locator('#termInput').input_value() == ''
             assert not errors, errors
             print(f"Screenshots: {screenshots}", flush=True)
             print("PASS: layout, wrapping, drawers, palette and return to list.", flush=True)

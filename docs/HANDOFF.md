@@ -41,6 +41,22 @@ on entry and owns the floating **Show/Hide terminal controls** button. Hiding
 controls closes panels and blurs the input without clearing its draft. Automatic
 refreshes preserve the current controls state.
 
+`TerminalInput` makes **ABC**, **Keys**, **123** and **Commands** mutually
+exclusive. It measures the last native-keyboard height when Chromium exposes it,
+and custom panels reuse that bounded space. In compact view, transient composer
+status overlays output, image preview becomes a filename chip and terminal output
+may shrink to 26px so input controls stay within the visual viewport.
+
+`send_attachment` is an authenticated WebSocket operation. The browser sends one
+PNG, JPEG or WebP image (5 MiB decoded maximum) with an optional 1000-character
+message and waits for a request-scoped acknowledgement. The relay validates the
+container, writes a generated owner-only file below its data directory, then runs
+`herdr agent prompt` for the selected local pane/session with the absolute path.
+SSH panes are rejected before writing. Storage stops accepting images at 100 files
+or 50 MiB and never evicts an image an agent may still need. Override the parent
+directory with `HERDR_RELAY_DATA_DIR`; the default is the platform's normal user
+data location. The relay must restart after this protocol handler changes.
+
 `docs/TAILSCALE.md` covers serve versus funnel and the node attribute that gates
 funnel.
 
@@ -112,7 +128,7 @@ it is configuration-driven — but the credentials and its service are gone.
 - Tests live in `tests/`, run with `sh tests/run.sh`. Behaviour that mattered
   enough to debug once has a test; copy does not.
 - Optional layout checks use Playwright and synthetic data:
-  `uv run --with playwright python tests/check_terminal_layout.py`, after
+  `HERDR_BROWSER_TESTS=1 sh tests/run.sh`, after
   installing its Chromium with
   `uv run --with playwright python -m playwright install chromium --only-shell`.
   They exercise phone/tablet sizes, fullscreen, wrapping and constrained keyboard

@@ -28,6 +28,34 @@ except ModuleNotFoundError:
     _agent_state_spec.loader.exec_module(_agent_state_module)
     complete_agent_update_message = _agent_state_module.complete_agent_update_message
 
+try:
+    from attachments import AttachmentError, AttachmentStore
+except ModuleNotFoundError:
+    from importlib.util import module_from_spec, spec_from_file_location
+
+    _attachments_spec = spec_from_file_location(
+        "herdr_remote_attachments", os.path.join(os.path.dirname(__file__), "attachments.py")
+    )
+    _attachments_module = module_from_spec(_attachments_spec)
+    _attachments_spec.loader.exec_module(_attachments_module)
+    AttachmentError = _attachments_module.AttachmentError
+    AttachmentStore = _attachments_module.AttachmentStore
+
+
+def _get_data_dir():
+    if sys.platform == "darwin":
+        return os.path.expanduser("~/Library/Application Support/herdr-remote")
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA", os.path.expanduser("~/AppData/Local"))
+        return os.path.join(base, "herdr-remote")
+    base = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
+    return os.path.join(base, "herdr-remote")
+
+
+DATA_DIR = os.environ.get("HERDR_RELAY_DATA_DIR", _get_data_dir())
+attachment_store = AttachmentStore(os.path.join(DATA_DIR, "attachments"))
+WS_MAX_SIZE = 8 * 1024 * 1024  # One 5 MiB image, base64 plus bounded request metadata.
+
 def _get_log_dir():
     if sys.platform == "darwin":
         return os.path.expanduser("~/Library/Logs/herdr-remote")
@@ -1240,6 +1268,44 @@ async def authenticate_client(ws) -> bool:
     return True
 
 
+def submit_attachment(message):
+    """Validate, store and submit in a worker so disk/CLI work cannot block WS."""
+    request_id = message.get("request_id")
+    error = {"type": "error", "request_id": request_id if isinstance(request_id, str) else None}
+    if not isinstance(request_id, str) or not request_id or len(request_id) > 128:
+        return {**error, "message": "Invalid image request_id"}
+    pane_id = message.get("pane_id")
+    if not isinstance(pane_id, str):
+        return {**error, "message": "unknown pane_id"}
+    target = resolve_pane(pane_id)
+    if target is None:
+        return {**error, "message": "unknown pane_id"}
+    if target.kwargs.get("remote"):
+        return {**error, "message": "Image attachments are not supported for SSH panes"}
+    text = message.get("text", "")
+    if not isinstance(text, str) or len(text) > 1000:
+        return {**error, "message": "Image prompt text must be at most 1000 characters"}
+    try:
+        path = attachment_store.save(message.get("attachment"))
+    except AttachmentError as exc:
+        return {**error, "message": str(exc)}
+    prompt = f"Inspect the attached local image at this absolute path:\n{path}"
+    if text:
+        prompt += f"\n\n{text}"
+    try:
+        result = run_herdr_result("agent", "prompt", target.herdr_pane_id, prompt, **target.kwargs)
+        accepted = result.returncode == 0
+    except Exception:
+        accepted = False
+    if not accepted:
+        try:
+            path.unlink(missing_ok=True)
+        except OSError:
+            log.warning("Unable to remove failed image attachment")
+        return {**error, "message": "Image prompt submission failed"}
+    return {"type": "command_result", "command": "send_attachment", "request_id": request_id, "ok": True}
+
+
 async def handle_client(ws):
     if not await authenticate_client(ws):
         return
@@ -1437,6 +1503,10 @@ async def handle_client(ws):
                 if request_id:
                     response["request_id"] = request_id
                 await ws.send(json.dumps(response))
+            elif msg_type == "send_attachment":
+                response = await asyncio.to_thread(submit_attachment, msg)
+                audit("send_attachment", ip, device, "", f"ok={response.get('ok', False)}")
+                await ws.send(json.dumps(response))
             elif msg_type == "send_text":
                 target = resolve_pane(msg["pane_id"])
                 if target is None:
@@ -1574,7 +1644,9 @@ async def main():
         except OSError:
             log.warning("UDP 8376 in use, plugin push disabled")
         tasks = [asyncio.create_task(poll_loop()), asyncio.create_task(event_push())]
-        server = await serve(handle_client, RELAY_HOST, WS_PORT, process_request=process_request)
+        server = await serve(
+            handle_client, RELAY_HOST, WS_PORT, process_request=process_request, max_size=WS_MAX_SIZE
+        )
         local_sessions = list_local_sessions()
         hosts = [
             f"local:{session}" if session else "local" for session in local_sessions

@@ -85,9 +85,22 @@ and preserves any command draft. Incoming updates keep your controls visible or
 hidden as you chose; opening a terminal from the list starts with them hidden.
 
 The terminal uses the available screen width and height on phones and tablets
-in either orientation. When controls are visible, the command field stays within
-the visible area when the on-screen keyboard reduces that space; extra key panels
-scroll when space is limited.
+in either orientation, including the area behind a display cutout. The output may
+therefore pass behind the camera; the floating menu and revealed toolbar retain
+safe-area spacing so their controls remain reachable.
+
+When controls are visible, choose one input mode: **ABC** opens the Android
+keyboard, **Keys** provides terminal keys such as Tab, Escape and Ctrl, **123**
+provides a number pad, and **Commands** shows quick replies and agent commands.
+Only one keyboard area is shown at a time. The command draft is preserved while
+switching modes, and custom panels scroll when the available height is small.
+
+Use **＋** to choose a PNG, JPEG or WebP screenshot up to 5 MiB. The image is
+previewed locally and can be removed before sending. The relay stores an accepted
+image in its private data directory and asks the selected local agent to inspect
+that path together with the typed message. Failed and unconfirmed sends retain
+the image and text for review or retry. Image attachments to SSH panes are not
+supported because their filesystem cannot access a path stored on the relay host.
 
 Output wraps to the screen width by default. **Keep columns** in the terminal
 toolbar preserves original line layout for tables and structured output, with

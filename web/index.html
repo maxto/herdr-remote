@@ -102,10 +102,10 @@ body.terminal-open > .header { display: none; }
 .agent .meta { font-size: 0.7rem; color: var(--muted); margin-top: 2px; }
 
 /* Terminal view */
-.terminal-view { display: none; flex-direction: column; position: fixed; top: var(--terminal-top, 0px); left: var(--terminal-left, 0px); width: var(--terminal-width, 100%); height: var(--terminal-height, 100dvh); padding: env(safe-area-inset-top, 0px) env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); overflow: hidden; background: var(--bg); z-index: 50; }
+.terminal-view { display: none; flex-direction: column; position: fixed; top: var(--terminal-top, 0px); left: var(--terminal-left, 0px); width: var(--terminal-width, 100%); height: var(--terminal-height, 100dvh); padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); overflow: hidden; background: var(--bg); z-index: 50; }
 .terminal-view.active { display: flex; }
-.term-header { padding: 4px 48px 4px 4px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
-.terminal-view.controls-hidden > :is(.term-header, .term-search, .term-history, .term-input, .term-keys, .quick-actions) { display: none !important; }
+.term-header { padding: calc(4px + env(safe-area-inset-top, 0px)) 48px 4px 4px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
+.terminal-view.controls-hidden > :is(.term-header, .term-search, .term-history, .term-input, .term-keys, .quick-actions, .input-modes, .attachment-preview, .composer-status) { display: none !important; }
 .terminal-controls-toggle { position: absolute; top: calc(4px + env(safe-area-inset-top, 0px)); right: calc(4px + env(safe-area-inset-right, 0px)); width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); cursor: pointer; z-index: 20; }
 .terminal-controls-toggle:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .terminal-view.compact:not(.controls-hidden) .terminal-controls-toggle { top: env(safe-area-inset-top, 0px); }
@@ -114,7 +114,7 @@ body.terminal-open > .header { display: none; }
 .term-header button:hover { color: var(--text); background: var(--border); }
 .term-header .back, .term-header button[aria-pressed="true"] { color: var(--blue); }
 .term-header .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.8rem; font-weight: 500; }
-.term-history { position: absolute; top: calc(var(--term-header-height, 49px) + env(safe-area-inset-top, 0px)); left: env(safe-area-inset-left, 0px); right: env(safe-area-inset-right, 0px); bottom: env(safe-area-inset-bottom, 0px); background: var(--surface); display: flex; flex-direction: column; min-height: 0; z-index: 10; }
+.term-history { position: absolute; top: var(--term-header-height, 49px); left: env(safe-area-inset-left, 0px); right: env(safe-area-inset-right, 0px); bottom: env(safe-area-inset-bottom, 0px); background: var(--surface); display: flex; flex-direction: column; min-height: 0; z-index: 10; }
 .term-history .msg { padding: 8px 0; border-bottom: 1px solid var(--border); }
 .term-history .msg-role { font-size: 0.7rem; font-weight: 600; color: var(--muted); text-transform: uppercase; margin-bottom: 4px; }
 .term-history .msg-user { color: var(--blue); }
@@ -141,10 +141,28 @@ body.terminal-open > .header { display: none; }
 .term-input { border-top: 1px solid var(--border); padding: 8px 12px; display: flex; gap: 6px; background: var(--surface); flex-shrink: 0; }
 .term-input input { flex: 1; padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 16px; font-family: 'Hack Nerd Font', 'CaskaydiaCove Nerd Font Mono', 'JetBrainsMono Nerd Font Mono', Consolas, monospace; min-width: 0; }
 .term-input button:last-child { padding: 10px 14px; border-radius: 6px; border: none; background: var(--blue); color: #fff; font-weight: 700; font-size: 16px; flex-shrink: 0; }
-.terminal-view.compact .term-header { padding-top: 0; padding-bottom: 0; }
+.terminal-view.compact .term-header { padding-top: env(safe-area-inset-top, 0px); padding-bottom: 0; }
 .terminal-view.compact .term-search, .terminal-view.compact .term-input { padding-top: 4px; padding-bottom: 4px; }
 .term-keys { border-top: 1px solid var(--border); padding: 8px 12px; display: flex; flex-direction: column; background: var(--surface); max-height: 35%; min-height: 0; overflow-y: auto; flex-shrink: 1; }
 .term-keys > * { flex-shrink: 0; }
+.terminal-view .term-keys { height: min(var(--input-panel-height, 260px), 45%); max-height: 45%; }
+.input-modes { display: flex; gap: 4px; padding: 2px 8px; flex-shrink: 0; background: var(--surface); border-top: 1px solid var(--border); }
+.input-modes button { flex: 1; min-width: 0; min-height: 32px; border: none; border-radius: 6px; background: var(--bg); color: var(--muted); cursor: pointer; font-size: 13px; }
+.input-modes button[aria-pressed="true"] { background: var(--blue); color: #fff; }
+.input-modes button:focus-visible { outline: 2px solid var(--blue); }
+.terminal-view.searching .input-modes { display: none; }
+#quickDock .quick-actions { max-height: none; padding: 0 0 8px; }
+.attachment-preview { display: flex; align-items: center; gap: 8px; padding: 4px 12px; flex-shrink: 0; background: var(--surface); }
+.attachment-preview[hidden], .composer-status[hidden] { display: none; }
+.attachment-preview img { width: 40px; height: 40px; object-fit: contain; }
+.attachment-preview span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; }
+.attachment-preview button { width: 36px; height: 36px; border: none; border-radius: 6px; background: var(--bg); color: var(--text); cursor: pointer; }
+.composer-status { margin: 0; padding: 4px 12px; font-size: 12px; background: var(--surface); color: var(--text); flex-shrink: 0; max-height: 48px; overflow: auto; }
+.terminal-view.compact .term-content { min-height: 26px; }
+.terminal-view.compact .attachment-preview { min-height: 24px; padding: 0 8px; }
+.terminal-view.compact .attachment-preview img { display: none; }
+.terminal-view.compact .attachment-preview button { width: 24px; height: 24px; }
+.terminal-view.compact .composer-status { position: absolute; top: var(--term-header-height, 41px); left: env(safe-area-inset-left, 0px); right: env(safe-area-inset-right, 0px); z-index: 15; max-height: 44px; box-shadow: 0 1px 4px rgba(0,0,0,0.25); }
 #cmdPalette { position: fixed; inset: 0; z-index: 100; }
 #cmdPalette > div:last-child { max-height: 50dvh; }
 body.terminal-open #cmdPalette { inset: auto; top: var(--terminal-top, 0px); left: var(--terminal-left, 0px); width: var(--terminal-width, 100%); height: var(--terminal-height, 100dvh); }
@@ -264,22 +282,27 @@ body.terminal-open #cmdPalette > div:last-child { max-height: 90%; }
     <button onclick="toggleSearch()" aria-label="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
   </div>
   <div class="term-content" id="termContent">Loading…</div>
-  <div class="quick-actions" id="quickActions"></div>
+  <div class="attachment-preview" id="attachmentPreview" hidden>
+    <img id="attachmentImage" alt="Selected image preview">
+    <span id="attachmentName"></span>
+    <button id="removeAttachment" type="button" aria-label="Remove image">×</button>
+  </div>
+  <p id="composerStatus" class="composer-status" role="status" hidden></p>
+  <input id="attachmentInput" type="file" accept="image/png,image/jpeg,image/webp" hidden>
   <div class="term-input" id="termInputBar">
-    <button onclick="openCommandPalette()" aria-label="Commands" style="padding:10px 12px;border-radius:6px;border:1px solid var(--blue);background:var(--bg);color:var(--blue);font-weight:700;font-size:14px;flex-shrink:0">/</button>
+    <button id="addAttachment" type="button" aria-label="Attach image" title="Attach screenshot or image" style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:22px">＋</button>
     <input id="termInput" placeholder="Type…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
-    <button onclick="toggleQuickDock()" aria-label="Quick actions" style="padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--orange);flex-shrink:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2 3 14h9l-1 8 10-12h-9l1-8z"/></svg></button>
-    <button onclick="toggleKeysDock()" aria-label="Keys" style="padding:8px 10px;border-radius:6px;border:1px solid var(--border);background:var(--bg);color:var(--muted);flex-shrink:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="4" width="20" height="16" rx="2"/><path d="M6 8h.001M10 8h.001M14 8h.001M18 8h.001M8 12h.001M12 12h.001M16 12h.001M7 16h10"/></svg></button>
-    <button onclick="sendText()" aria-label="Send" style="padding:10px 14px;border-radius:6px;border:none;background:var(--blue);color:#fff;flex-shrink:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
+    <button id="sendTextButton" onclick="sendText()" aria-label="Send" style="padding:10px 14px;border-radius:6px;border:none;background:var(--blue);color:#fff;flex-shrink:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
+  </div>
+  <div class="input-modes" id="inputModes" role="group" aria-label="Input mode">
+    <button type="button" id="inputModeAbc" aria-pressed="true" onclick="TerminalInput.select('abc')">ABC</button>
+    <button type="button" id="inputModeKeys" aria-pressed="false" aria-controls="termKeys" onclick="TerminalInput.select('keys')">Keys</button>
+    <button type="button" id="inputModeDigits" aria-pressed="false" aria-controls="termKeys" onclick="TerminalInput.select('digits')">123</button>
+    <button type="button" id="inputModeCommands" aria-pressed="false" aria-controls="quickDock" onclick="TerminalInput.select('commands')">Commands</button>
   </div>
   <div class="term-keys" id="termKeys" style="display:none">
     <!-- Key queue strip (visible when composing) -->
     <div id="keyQueueStrip" style="display:none;width:100%;padding:6px 0;border-bottom:1px solid var(--border);margin-bottom:6px;flex-wrap:wrap;gap:4px;align-items:center"></div>
-    <!-- Tab toggle -->
-    <div style="display:grid;grid-template-columns:1fr 1fr;gap:4px;width:100%;margin-bottom:6px">
-      <button class="tab-btn active" id="tabKeys" onclick="switchKeyTab('keys')">Keys</button>
-      <button class="tab-btn" id="tabDigits" onclick="switchKeyTab('digits')">123</button>
-    </div>
     <!-- Keys pad -->
     <div id="keysPad" style="width:100%">
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:4px;margin-bottom:4px">
@@ -311,6 +334,8 @@ body.terminal-open #cmdPalette > div:last-child { max-height: 90%; }
   </div>
   <!-- Quick actions dock -->
   <div class="term-keys" id="quickDock" style="display:none">
+    <div class="quick-actions" id="quickActions"></div>
+    <button class="nav-key" type="button" onclick="openCommandPalette()" style="margin-bottom:8px">Agent commands</button>
     <div style="display:flex;align-items:center;justify-content:space-between;width:100%;margin-bottom:8px">
       <span style="font-size:0.7rem;font-weight:600;text-transform:uppercase;letter-spacing:0.05em;color:var(--muted)">Quick Actions</span>
       <button onclick="toggleQuickDock()" aria-label="Close" style="background:none;border:none;color:var(--muted);font-size:1rem;cursor:pointer">✕</button>
@@ -422,6 +447,7 @@ const TerminalViewport = (() => {
 
   function setControlsVisible(visible) {
     if (!visible) {
+      if (typeof TerminalInput !== 'undefined') TerminalInput.reset();
       document.activeElement?.blur();
       hidePanels();
     }
@@ -479,6 +505,7 @@ const TerminalViewport = (() => {
   function close() {
     if (!opened) return;
     opened = false;
+    if (typeof TerminalInput !== 'undefined') TerminalInput.reset();
     document.activeElement?.blur();
     document.body.classList.remove('terminal-open');
     hidePanels();
@@ -487,7 +514,214 @@ const TerminalViewport = (() => {
   return { open, close };
 })();
 </script>
+<script id="terminalInput">
+const TerminalInput = (() => {
+  const view = document.getElementById('terminalView');
+  const input = document.getElementById('termInput');
+  const keys = document.getElementById('termKeys');
+  const commands = document.getElementById('quickDock');
+  const digits = document.getElementById('digitsPad');
+  for (const key of ['1', '2', '3', '4', '5', '6', '7', '8', '9', 'BSpace', '0', 'Enter']) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.className = 'digit-key';
+    button.textContent = key === 'BSpace' ? '⌫' : key === 'Enter' ? '⏎' : key;
+    button.setAttribute('aria-label', key === 'BSpace' ? 'Backspace' : key);
+    button.addEventListener('click', () => fireKey(key));
+    digits.appendChild(button);
+  }
+  const buttons = ['inputModeAbc', 'inputModeKeys', 'inputModeDigits', 'inputModeCommands'].map(id => document.getElementById(id));
+  const modes = ['abc', 'keys', 'digits', 'commands'];
+  let width = 0, availableHeight = 0, keyboardHeight = 260;
+
+  function measure() {
+    const viewport = window.visualViewport;
+    if (viewport && viewport.scale !== 1) return;
+    const nextWidth = viewport ? viewport.width : window.innerWidth;
+    const height = viewport ? viewport.height : window.innerHeight;
+    if (Math.abs(nextWidth - width) > 40) {
+      availableHeight = height;
+      keyboardHeight = 260;
+    }
+    width = nextWidth;
+    availableHeight = Math.max(availableHeight, height);
+    const nativeHeight = navigator.virtualKeyboard?.boundingRect.height || availableHeight - height;
+    if (document.activeElement === input && nativeHeight > 80) keyboardHeight = nativeHeight;
+    view.style.setProperty('--input-panel-height', `${keyboardHeight}px`);
+  }
+
+  function select(mode, focus = true) {
+    if (!modes.includes(mode)) return;
+    measure();
+    keys.style.display = mode === 'keys' || mode === 'digits' ? 'flex' : 'none';
+    commands.style.display = mode === 'commands' ? 'flex' : 'none';
+    document.getElementById('keysPad').style.display = mode === 'keys' ? '' : 'none';
+    document.getElementById('digitsPad').style.display = mode === 'digits' ? 'grid' : 'none';
+    buttons.forEach((button, index) => button.setAttribute('aria-pressed', String(modes[index] === mode)));
+    if (mode === 'abc') {
+      if (focus) input.focus({ preventScroll: true });
+      return;
+    }
+    document.activeElement?.blur();
+    navigator.virtualKeyboard?.hide();
+  }
+
+  function reset() {
+    select('abc', false);
+    view.classList.remove('searching');
+  }
+  input.addEventListener('focus', () => select('abc', false));
+  window.visualViewport?.addEventListener('resize', measure);
+  window.addEventListener('resize', measure);
+  navigator.virtualKeyboard?.addEventListener('geometrychange', measure);
+  return { select, reset };
+})();
+</script>
 <script src="./security.js"></script>
+<script id="terminalAttachments">
+const TerminalAttachments = (() => {
+  const drafts = new Map();
+  const input = document.getElementById('termInput');
+  const picker = document.getElementById('attachmentInput');
+  const preview = document.getElementById('attachmentPreview');
+  const image = document.getElementById('attachmentImage');
+  const name = document.getElementById('attachmentName');
+  const status = document.getElementById('composerStatus');
+  const add = document.getElementById('addAttachment');
+  const remove = document.getElementById('removeAttachment');
+  const sendButton = document.getElementById('sendTextButton');
+  let pane = null;
+
+  function render() {
+    const draft = drafts.get(pane);
+    preview.hidden = !draft?.file;
+    if (draft?.url) image.src = draft.url;
+    else image.removeAttribute('src');
+    name.textContent = draft?.file?.name || '';
+    status.textContent = draft?.status || '';
+    status.hidden = !draft?.status;
+    for (const control of [input, add, remove, sendButton]) control.disabled = Boolean(draft?.pending);
+  }
+
+  function open(id) {
+    if (pane === id) return;
+    if (drafts.has(pane)) drafts.get(pane).text = input.value;
+    pane = id;
+    if (!drafts.has(id)) drafts.set(id, { text: '', file: null, url: null, status: '', pending: false });
+    input.value = drafts.get(id).text;
+    picker.value = '';
+    render();
+  }
+
+  function clearImage(draft) {
+    if (draft.url) URL.revokeObjectURL(draft.url);
+    draft.file = null;
+    draft.url = null;
+  }
+
+  add.addEventListener('click', () => {
+    if (!pane || drafts.get(pane)?.pending) return;
+    TerminalInput.reset();
+    input.blur();
+    picker.click();
+  });
+  picker.addEventListener('change', () => {
+    const draft = drafts.get(pane);
+    const file = picker.files[0];
+    picker.value = '';
+    if (!draft || !file || draft.pending) return;
+    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || !file.size || file.size > 5 * 1024 * 1024) {
+      draft.status = 'Choose a PNG, JPEG or WebP image up to 5 MiB.';
+      render();
+      return;
+    }
+    clearImage(draft);
+    draft.file = file;
+    draft.url = URL.createObjectURL(file);
+    draft.status = '';
+    render();
+  });
+  remove.addEventListener('click', () => {
+    const draft = drafts.get(pane);
+    if (!draft || draft.pending) return;
+    clearImage(draft);
+    draft.status = '';
+    render();
+  });
+
+  function fail(draft, message) {
+    clearTimeout(draft.timer);
+    draft.pending = false;
+    draft.status = message;
+    render();
+  }
+
+  async function send(socket, id) {
+    const draft = drafts.get(id);
+    if (!draft?.file) return false;
+    if (draft.pending) return true;
+    draft.text = input.value;
+    if (!socket || socket.readyState !== 1) {
+      fail(draft, 'Not connected. Image and text have been kept.');
+      return true;
+    }
+    if (draft.text.length > 1000) {
+      fail(draft, 'Keep the message with your image within 1000 characters.');
+      return true;
+    }
+    draft.pending = true;
+    draft.status = 'Sending image…';
+    draft.requestId = crypto.randomUUID();
+    const requestId = draft.requestId;
+    render();
+    try {
+      const data = await new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result.split(',')[1]);
+        reader.onerror = () => reject(new Error('Could not read this image.'));
+        reader.onabort = () => reject(new Error('Image reading was cancelled.'));
+        reader.readAsDataURL(draft.file);
+      });
+      if (!draft.pending || draft.requestId !== requestId) return true;
+      socket.send(JSON.stringify({type: 'send_attachment', request_id: requestId, pane_id: id,
+        text: draft.text, attachment: {name: draft.file.name, mime: draft.file.type, data}}));
+      draft.timer = setTimeout(() => fail(draft,
+        'Delivery not confirmed. Check the terminal before retrying. Image and text have been kept.'), 30000);
+    } catch (error) {
+      if (draft.requestId === requestId) fail(draft, error.message || 'Image could not be sent.');
+    }
+    return true;
+  }
+
+  function handleMessage(message) {
+    if (!message.request_id || !['error', 'command_result'].includes(message.type)) return false;
+    const entry = [...drafts].find(([, draft]) => draft.requestId === message.request_id);
+    if (!entry) return false;
+    const [id, draft] = entry;
+    if (message.type === 'command_result' && message.command !== 'send_attachment') return false;
+    clearTimeout(draft.timer);
+    draft.pending = false;
+    if (message.type === 'error' || !message.ok) {
+      draft.status = message.message || 'Image delivery failed. Image and text have been kept.';
+    } else {
+      clearImage(draft);
+      draft.text = '';
+      if (pane === id) input.value = '';
+      draft.status = 'Image sent to the agent.';
+    }
+    draft.requestId = null;
+    render();
+    return true;
+  }
+
+  function disconnected() {
+    for (const draft of drafts.values()) {
+      if (draft.pending) fail(draft, 'Connection lost. Check the terminal before retrying; your draft has been kept.');
+    }
+  }
+  return { open, send, handleMessage, disconnected };
+})();
+</script>
 <script>
 
 let ws = null, agents = [], activePane = null, refreshInterval = null, userScrolledUp = false;
@@ -721,7 +955,7 @@ const connectionController = HerdrSecurity.createConnectionController({
   cancelReconnect: clearTimeout,
   onAuthenticated: () => { if(window.cue) cue('ready'); },
   onMessage: handleMessage,
-  onSocketChange: socket => { ws = socket; },
+  onSocketChange: socket => { if (ws && ws !== socket) TerminalAttachments.disconnected(); ws = socket; },
   onStatus: setStatus,
   openSocket: url => new WebSocket(url),
   scheduleReconnect: callback => setTimeout(callback, 3000),
@@ -799,6 +1033,7 @@ function ansiFragment(input) {
 }
 
 function handleMessage(msg) {
+  if (TerminalAttachments.handleMessage(msg)) return;
   if (msg.type === 'agents') {
     // Track timeline on status changes
     for (const a of msg.agents) {
@@ -1041,6 +1276,7 @@ function section(title, color, list) {
 }
 
 function openTerminal(paneId, immersive = true) {
+  if (typeof TerminalAttachments !== 'undefined') TerminalAttachments.open(paneId);
   if (activePane !== paneId) document.getElementById('termContent').textContent = 'Loading…';
   activePane = paneId; paneLines = 200; userScrolledUp = false;
   const a = agents.find(x => x.pane_id===paneId);
@@ -1141,11 +1377,14 @@ function toggleSearch() {
   const bar = document.getElementById('termSearch');
   const input = document.getElementById('searchInput');
   if (bar.style.display === 'none') {
+    TerminalInput.reset();
+    document.getElementById('terminalView').classList.add('searching');
     bar.style.display = 'flex';
     document.getElementById('termHistory').style.display = 'none'; // close history if open
     input.focus();
   } else {
     bar.style.display = 'none';
+    document.getElementById('terminalView').classList.remove('searching');
     input.value = '';
     clearSearch();
   }
@@ -1378,7 +1617,8 @@ function setupLongPress(el, type, id, name) {
   el.addEventListener('contextmenu', (e) => showContextMenu(e, type, id, name));
 }
 
-function sendText() {
+async function sendText() {
+  if (await TerminalAttachments.send(ws, activePane)) return;
   const i=document.getElementById('termInput');
   if(!i.value||!ws||!activePane)return;
   const agent=agents.find(a=>a.pane_id===activePane);
@@ -1458,23 +1698,7 @@ function sendQueuedKeys() {
   keyQueue=[]; armedMod=null; renderKeyQueue(); renderMods();
 }
 
-function toggleKeysDock() {
-  const el = document.getElementById('termKeys');
-  const quick = document.getElementById('quickDock');
-  const show = el.style.display === 'none';
-  el.style.display = show ? '' : 'none';
-  if (show) quick.style.display = 'none'; // mutual exclusive
-  if(window.cue) cue(show ? 'page' : 'tick');
-}
-
-function toggleQuickDock() {
-  const el = document.getElementById('quickDock');
-  const keys = document.getElementById('termKeys');
-  const show = el.style.display === 'none';
-  el.style.display = show ? '' : 'none';
-  if (show) keys.style.display = 'none'; // mutual exclusive
-  if(window.cue) cue(show ? 'page' : 'tick');
-}
+function toggleQuickDock() { TerminalInput.reset(); }
 
 function quickSend(text) {
   if (!ws || !activePane) return;
@@ -1485,16 +1709,6 @@ function quickSend(text) {
   setTimeout(refreshPane, 500);
 }
 
-function switchKeyTab(tab) {
-  document.getElementById('tabKeys').classList.toggle('active', tab==='keys');
-  document.getElementById('tabDigits').classList.toggle('active', tab==='digits');
-  document.getElementById('keysPad').style.display = tab==='keys' ? '' : 'none';
-  const dp = document.getElementById('digitsPad');
-  dp.style.display = tab==='digits' ? 'grid' : 'none';
-  if (tab==='digits' && !dp.innerHTML) {
-    dp.innerHTML = [1,2,3,4,5,6,7,8,9].map(d => `<button class="digit-key" onclick="fireKey('${d}')">${d}</button>`).join('');
-  }
-}
 
 function toggleCtrlPresets() {
   const el = document.getElementById('ctrlPresets');
@@ -1601,6 +1815,7 @@ function getAgentCommands() {
 }
 
 function openCommandPalette() {
+  TerminalInput.reset();
   if(window.cue) cue('page');
   document.getElementById('cmdPalette').style.display = '';
   document.getElementById('cmdSearch').value = '';

@@ -91,6 +91,14 @@ echo "10d. terminal viewport"
 node "$DIR/tests/test_terminal_viewport.js"
 assert_eq "$?" "0" "terminal viewport"
 
+echo "10e. mobile browser layout"
+if [ "${HERDR_BROWSER_TESTS:-0}" = "1" ]; then
+  uv run --with playwright python "$DIR/tests/check_terminal_layout.py"
+  assert_eq "$?" "0" "mobile layout and image composer"
+else
+  PASS=$((PASS+1)); echo "  skip: set HERDR_BROWSER_TESTS=1 to run Playwright"
+fi
+
 # --- macOS app ---
 echo ""
 echo "=== macOS app ==="
