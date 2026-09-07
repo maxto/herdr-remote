@@ -47,6 +47,23 @@ async def main():
             }""")
             await page.locator('[data-pane-id="demo:workspace:p1"]').click()
             await page.wait_for_function("document.body.classList.contains('terminal-open')")
+
+            async def check_reading_view():
+                for selector in ['#termHeader', '.term-input', '#termKeys', '#quickDock',
+                                 '#quickActions', '#termSearch', '#termHistory']:
+                    assert not await page.locator(selector).is_visible(), selector
+                output = await page.locator('#termContent').bounding_box()
+                view = await page.locator('#terminalView').bounding_box()
+                assert abs(output['height'] - view['height']) < 2, (output, view)
+                button = page.get_by_role('button', name='Show terminal controls', exact=True)
+                assert await button.is_visible()
+                assert await button.get_attribute('aria-expanded') == 'false'
+                bounds = await button.bounding_box()
+                assert bounds['x'] >= view['x'] and bounds['y'] >= view['y'], bounds
+                assert bounds['x'] + bounds['width'] <= view['x'] + view['width'], bounds
+
+            await check_reading_view()
+            await page.get_by_role('button', name='Show terminal controls', exact=True).click()
             await page.evaluate("""() => handleMessage({type: 'pane_content', pane_id: 'demo:workspace:p1',
               content: '\\x1b[32mTerminale di prova\\x1b[0m\\n' +
                 Array.from({length: 30}, (_, i) => `${i + 1}. Output leggibile sul dispositivo: ` +
@@ -102,8 +119,11 @@ async def main():
                 (1024, 350, "tablet keyboard space"),
             ]:
                 await check_layout(width, height, label)
+                await page.get_by_role('button', name='Hide terminal controls', exact=True).click()
+                await check_reading_view()
                 if label in {"phone portrait", "phone landscape", "tablet landscape"}:
                     await page.screenshot(path=str(screenshots / f"{label.replace(' ', '-')}.png"))
+                await page.get_by_role('button', name='Show terminal controls', exact=True).click()
 
             await page.locator('.search-btn').click()
             await check_layout(852, 190, "landscape keyboard search")
@@ -121,6 +141,17 @@ async def main():
             }""")
             await page.locator('.term-input button[aria-label="Keys"]').click()
             await check_layout(852, 190, "keyboard plus action keys")
+            await page.locator('#termInput').fill('draft command')
+            await page.get_by_role('button', name='Hide terminal controls', exact=True).click()
+            await check_reading_view()
+            assert not await page.evaluate("document.activeElement.id === 'termInput'")
+            await page.evaluate("openTerminal('demo:workspace:p1', false)")
+            await check_reading_view()
+            await page.get_by_role('button', name='Show terminal controls', exact=True).click()
+            assert await page.locator('#termInput').input_value() == 'draft command'
+            assert not await page.locator('#termKeys').is_visible()
+            await page.evaluate("openTerminal('demo:workspace:p1', false)")
+            assert await page.locator('#termInput').is_visible()
             await page.locator('.term-input button[aria-label="Commands"]').click()
             panel = await page.locator('#cmdPalette > div').last.bounding_box()
             assert panel["y"] >= 0 and panel["y"] + panel["height"] <= 191, panel
@@ -128,6 +159,8 @@ async def main():
             await page.get_by_role("button", name="Back to agent list", exact=True).click()
             assert not await page.evaluate("document.body.classList.contains('terminal-open')")
             await page.wait_for_function("!document.fullscreenElement")
+            await page.locator('[data-pane-id="demo:workspace:p1"]').click()
+            await check_reading_view()
             assert not errors, errors
             print(f"Screenshots: {screenshots}", flush=True)
             print("PASS: layout, wrapping, drawers, palette and return to list.", flush=True)

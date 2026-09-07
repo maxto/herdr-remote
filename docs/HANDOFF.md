@@ -36,7 +36,10 @@ Selecting a terminal opens a dedicated responsive view. `TerminalViewport` in
 `FullscreenControls` owns the browser API and both fullscreen buttons. Refreshes
 triggered by agent messages use `openTerminal(activePane, false)` so they cannot
 force fullscreen after the user exits. Output wraps unless **Keep columns** is
-enabled; no remote pane resize is sent.
+enabled; no remote pane resize is sent. The same controller hides terminal chrome
+on entry and owns the floating **Show/Hide terminal controls** button. Hiding
+controls closes panels and blurs the input without clearing its draft. Automatic
+refreshes preserve the current controls state.
 
 `docs/TAILSCALE.md` covers serve versus funnel and the node attribute that gates
 funnel.

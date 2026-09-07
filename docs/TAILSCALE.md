@@ -77,10 +77,17 @@ the new icon: it opens in its own window without Chrome's address bar. Android's
 status and navigation bars may remain visible.
 
 Selecting an agent opens its terminal in a dedicated view, hides the dashboard
-header and requests fullscreen. The terminal uses the available screen width
-and height on phones and tablets in either orientation. Its command field stays
-within the visible area when the on-screen keyboard reduces that space; extra
-key panels scroll when space is limited.
+header and requests fullscreen. Only terminal output and a small floating menu
+button are shown initially. Tap **Show terminal controls** to reveal the toolbar
+and command field; tap **Hide terminal controls** to return to output only.
+Hiding controls also closes search, history and key panels, dismisses the keyboard
+and preserves any command draft. Incoming updates keep your controls visible or
+hidden as you chose; opening a terminal from the list starts with them hidden.
+
+The terminal uses the available screen width and height on phones and tablets
+in either orientation. When controls are visible, the command field stays within
+the visible area when the on-screen keyboard reduces that space; extra key panels
+scroll when space is limited.
 
 Output wraps to the screen width by default. **Keep columns** in the terminal
 toolbar preserves original line layout for tables and structured output, with
