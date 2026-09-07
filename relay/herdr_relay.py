@@ -4,7 +4,7 @@
 # dependencies = ["websockets>=14.0", "zeroconf>=0.80.0", "pywebpush>=2.0.0", "py-vapid>=1.9.0"]
 # ///
 """herdr-remote relay — polls herdr, accepts push events (HTTP POST + WebSocket + UDP), broadcasts to clients."""
-import asyncio, hashlib, hmac, json, logging, os, re, shutil, signal, socket, subprocess, threading, time, typing
+import asyncio, base64, binascii, hashlib, hmac, json, logging, os, re, secrets, shutil, signal, socket, subprocess, threading, time, typing
 
 try:
     from websockets.asyncio.server import serve
@@ -27,6 +27,53 @@ except ModuleNotFoundError:
     _agent_state_module = module_from_spec(_agent_state_spec)
     _agent_state_spec.loader.exec_module(_agent_state_module)
     complete_agent_update_message = _agent_state_module.complete_agent_update_message
+
+try:
+    from attachments import (
+        AttachmentError, AttachmentStore, UploadQuota, UploadSink, validate_declaration,
+    )
+except ModuleNotFoundError:
+    from importlib.util import module_from_spec, spec_from_file_location
+
+    _attachments_spec = spec_from_file_location(
+        "herdr_remote_attachments",
+        os.path.join(os.path.dirname(__file__), "attachments.py"),
+    )
+    _attachments_module = module_from_spec(_attachments_spec)
+    _attachments_spec.loader.exec_module(_attachments_module)
+    AttachmentError = _attachments_module.AttachmentError
+    AttachmentStore = _attachments_module.AttachmentStore
+    UploadQuota = _attachments_module.UploadQuota
+    UploadSink = _attachments_module.UploadSink
+    validate_declaration = _attachments_module.validate_declaration
+
+
+def _get_data_dir():
+    if sys.platform == "darwin":
+        return os.path.expanduser("~/Library/Application Support/herdr-remote")
+    if sys.platform == "win32":
+        base = os.environ.get("LOCALAPPDATA", os.path.expanduser("~/AppData/Local"))
+        return os.path.join(base, "herdr-remote")
+    base = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
+    return os.path.join(base, "herdr-remote")
+
+
+DATA_DIR = os.environ.get("HERDR_RELAY_DATA_DIR", _get_data_dir())
+attachment_store = AttachmentStore(os.path.join(DATA_DIR, "attachments"))
+# A chunk is the unit the frame ceiling has to fit, so both stay small.
+CHUNK_BYTES = 256 * 1024
+MAX_PENDING_UPLOAD_BYTES = 64 * 1024 * 1024
+upload_quota = UploadQuota(max_pending_bytes=MAX_PENDING_UPLOAD_BYTES)
+active_uploads = {}
+
+
+def discard_upload(upload_id):
+    """Drop an upload and everything it was holding: file, slot and budget."""
+    record = active_uploads.pop(upload_id, None)
+    if record is None:
+        return
+    record["sink"].abort()
+    upload_quota.release(record["token"])
 
 def _get_log_dir():
     if sys.platform == "darwin":
@@ -1277,6 +1324,47 @@ async def report_late_prompt_failure(ws, task, pane_id, request_id):
         log.debug("Could not report late agent_prompt failure for pane %s", pane_id)
 
 
+async def deliver_prompt(ws, target, pane_id, prompt, request_id, command):
+    """Submit a prompt and answer the client, confirming on acceptance.
+
+    A working agent can hold `herdr agent prompt` open longer than a phone is
+    willing to wait, so once the grace window passes the acceptance is
+    confirmed and any failure travels on its own afterwards. Returns whether
+    the agent took the prompt — a caller holding a file needs to know.
+    """
+    def failure(message):
+        response = {"type": "error", "message": message}
+        if isinstance(request_id, str) and request_id:
+            response["request_id"] = request_id
+        return json.dumps(response)
+
+    def accepted():
+        response = {"type": "command_result", "command": command, "ok": True}
+        if request_id:
+            response["request_id"] = request_id
+        return json.dumps(response)
+
+    task = asyncio.create_task(asyncio.to_thread(
+        run_herdr_result, "agent", "prompt", target.herdr_pane_id, prompt, **target.kwargs,
+    ))
+    try:
+        result = await asyncio.wait_for(asyncio.shield(task), PROMPT_ACK_GRACE)
+    except asyncio.TimeoutError:
+        await ws.send(accepted())
+        asyncio.create_task(report_late_prompt_failure(ws, task, pane_id, request_id))
+        return True
+    except Exception as exc:
+        log.warning("%s failed for pane %s: %s", command, pane_id, exc)
+        await ws.send(failure("Agent prompt submission failed"))
+        return False
+    if result.returncode != 0:
+        log.warning("%s failed for pane %s with exit %s", command, pane_id, result.returncode)
+        await ws.send(failure("Agent prompt submission failed"))
+        return False
+    await ws.send(accepted())
+    return True
+
+
 async def handle_client(ws):
     if not await authenticate_client(ws):
         return
@@ -1499,41 +1587,148 @@ async def handle_client(ws):
                     continue
                 log.info("Agent prompt from %s (%s): pane=%s chars=%d", ip, device, pane_id, len(text))
                 audit("agent_prompt", ip, device, pane_id, f"chars={len(text)}")
-                prompt_task = asyncio.create_task(asyncio.to_thread(
-                    run_herdr_result,
-                    "agent", "prompt", target.herdr_pane_id, text, **target.kwargs,
-                ))
-                try:
-                    result = await asyncio.wait_for(
-                        asyncio.shield(prompt_task), PROMPT_ACK_GRACE
-                    )
-                except asyncio.TimeoutError:
-                    # The agent is still busy. Confirm acceptance now so the
-                    # client stops waiting on a prompt that did arrive, and let
-                    # any failure follow separately.
-                    response = {"type": "command_result", "command": "agent_prompt", "ok": True}
-                    if request_id:
+                await deliver_prompt(ws, target, pane_id, text, request_id, "agent_prompt")
+
+            elif msg_type == "attachment_begin":
+                request_id = msg.get("request_id")
+
+                def upload_error(message, correlate=True):
+                    response = {"type": "error", "message": message}
+                    if correlate and isinstance(request_id, str) and request_id:
                         response["request_id"] = request_id
-                    await ws.send(json.dumps(response))
-                    asyncio.create_task(
-                        report_late_prompt_failure(ws, prompt_task, pane_id, request_id)
-                    )
+                    return json.dumps(response)
+
+                if not isinstance(request_id, str) or not request_id or len(request_id) > 128:
+                    await ws.send(upload_error("Invalid attachment request_id", correlate=False))
                     continue
-                except Exception as exc:
-                    log.warning("agent_prompt command failed for pane %s: %s", pane_id, exc)
-                    await ws.send(json.dumps(prompt_error("Agent prompt submission failed")))
+                # One at a time per connection: a phone has one composer.
+                if any(record["ws"] is ws for record in active_uploads.values()):
+                    await ws.send(upload_error("Finish or cancel the current upload first"))
                     continue
-                if result.returncode != 0:
-                    log.warning(
-                        "agent_prompt command failed for pane %s with exit %s",
-                        pane_id, result.returncode,
-                    )
-                    await ws.send(json.dumps(prompt_error("Agent prompt submission failed")))
+                requested_pane_id = msg.get("pane_id")
+                target = resolve_pane(requested_pane_id) if isinstance(requested_pane_id, str) else None
+                if target is None:
+                    await ws.send(upload_error("unknown pane_id"))
                     continue
-                response = {"type": "command_result", "command": "agent_prompt", "ok": True}
-                if request_id:
-                    response["request_id"] = request_id
-                await ws.send(json.dumps(response))
+                if target.kwargs.get("remote"):
+                    await ws.send(upload_error("Attachments are not supported for SSH panes"))
+                    continue
+                mime = msg.get("mime")
+                size = msg.get("size")
+                try:
+                    # Judge the claim before a byte arrives, so an oversize file
+                    # is refused at the handshake instead of after being carried.
+                    extension = validate_declaration(msg.get("name"), mime, size)
+                    token = upload_quota.reserve(size)
+                except AttachmentError as exc:
+                    await ws.send(upload_error(str(exc)))
+                    continue
+                try:
+                    sink = UploadSink(attachment_store.directory, extension, total=size, mime=mime)
+                except (AttachmentError, OSError):
+                    upload_quota.release(token)
+                    await ws.send(upload_error("Private attachment storage is unavailable"))
+                    continue
+                upload_id = secrets.token_urlsafe(16)
+                now = time.monotonic()
+                active_uploads[upload_id] = {
+                    "ws": ws, "sink": sink, "token": token, "target": target,
+                    "pane_id": target.pane_id, "request_id": request_id,
+                    "started": now, "touched": now,
+                }
+                log.info("Attachment begin from %s (%s): pane=%s type=%s bytes=%d",
+                         ip, device, target.pane_id, mime, size)
+                audit("attachment_begin", ip, device, target.pane_id, f"type={mime} bytes={size}")
+                await ws.send(json.dumps({
+                    "type": "command_result", "command": "attachment_begin",
+                    "request_id": request_id, "upload_id": upload_id, "ok": True,
+                }))
+
+            elif msg_type in ("attachment_chunk", "attachment_commit", "attachment_abort"):
+                upload_id = msg.get("upload_id")
+                record = active_uploads.get(upload_id) if isinstance(upload_id, str) else None
+                if record is None or record["ws"] is not ws:
+                    if msg_type == "attachment_abort":
+                        await ws.send(json.dumps({
+                            "type": "command_result", "command": "attachment_abort", "ok": True,
+                        }))
+                    else:
+                        await ws.send(json.dumps({"type": "error", "message": "No such upload"}))
+                    continue
+                request_id = record["request_id"]
+
+                def upload_failed(message):
+                    return json.dumps({
+                        "type": "error", "request_id": request_id, "message": message,
+                    })
+
+                if msg_type == "attachment_abort":
+                    discard_upload(upload_id)
+                    await ws.send(json.dumps({
+                        "type": "command_result", "command": "attachment_abort",
+                        "request_id": request_id, "ok": True,
+                    }))
+                    continue
+
+                if msg_type == "attachment_chunk":
+                    try:
+                        encoded = msg.get("data")
+                        if not isinstance(encoded, str) or not encoded:
+                            raise AttachmentError("Attachment chunk is missing its data")
+                        payload = base64.b64decode(encoded, validate=True)
+                        if len(payload) > CHUNK_BYTES:
+                            raise AttachmentError("Attachment chunk is too large")
+                        record["sink"].write(msg.get("index"), payload)
+                    except (AttachmentError, binascii.Error, ValueError) as exc:
+                        discard_upload(upload_id)
+                        message = str(exc) if isinstance(exc, AttachmentError) else "Attachment chunk is not valid base64"
+                        await ws.send(upload_failed(message))
+                        continue
+                    record["touched"] = time.monotonic()
+                    # The ack is the flow control: the client sends the next
+                    # chunk only once this one landed, so a big file cannot be
+                    # queued whole in the browser's buffer.
+                    await ws.send(json.dumps({
+                        "type": "command_result", "command": "attachment_chunk",
+                        "request_id": request_id, "index": msg.get("index"), "ok": True,
+                    }))
+                    continue
+
+                text = msg.get("text", "")
+                if not isinstance(text, str) or len(text) > 10000:
+                    discard_upload(upload_id)
+                    await ws.send(upload_failed("Keep the message with your file within 10000 characters"))
+                    continue
+                target = resolve_pane(record["pane_id"])
+                if target is None:
+                    discard_upload(upload_id)
+                    await ws.send(upload_failed("unknown pane_id"))
+                    continue
+                try:
+                    path = record["sink"].finish()
+                except AttachmentError as exc:
+                    discard_upload(upload_id)
+                    await ws.send(upload_failed(str(exc)))
+                    continue
+                upload_quota.release(record["token"])
+                active_uploads.pop(upload_id, None)
+                prompt = f"Inspect the attached local file at this absolute path:\n{path}"
+                if text:
+                    prompt += f"\n\n{text}"
+                log.info("Attachment commit from %s (%s): pane=%s bytes=%d",
+                         ip, device, record["pane_id"], record["sink"].received)
+                audit("attachment_commit", ip, device, record["pane_id"],
+                      f"bytes={record['sink'].received}")
+                accepted = await deliver_prompt(
+                    ws, target, record["pane_id"], prompt, request_id, "attachment_commit",
+                )
+                if not accepted:
+                    # Refused before the agent took it, so nothing will read it.
+                    try:
+                        path.unlink(missing_ok=True)
+                    except OSError:
+                        log.warning("Unable to remove a rejected attachment")
+
             elif msg_type == "create_tab":
                 workspace_id = msg.get("workspace_id", "")
                 workspace = resolve_workspace(workspace_id)

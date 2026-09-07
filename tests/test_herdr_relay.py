@@ -1,4 +1,5 @@
 import asyncio
+import base64
 from html.parser import HTMLParser
 import importlib.util
 import json
@@ -1093,6 +1094,34 @@ def _pane(pane_id, agent="claude", workspace="w1", tab="w1:t1", cwd="/projects/t
     }
 
 
+class _ScriptedWebSocket(_FakeWebSocket):
+    """Feeds messages one at a time, filling in ids the relay has just issued.
+
+    An upload id exists only after the relay answers `attachment_begin`, so a
+    fixed list of messages cannot carry it.
+    """
+
+    def __init__(self, script, headers=None):
+        super().__init__([], headers)
+        self._script = [dict(message) for message in script]
+
+    async def __anext__(self):
+        if not self._script:
+            raise StopAsyncIteration
+        message = self._script.pop(0)
+        kind = message.get("type", "")
+        if kind.startswith("attachment_") and kind != "attachment_begin":
+            message.setdefault("upload_id", self._issued_upload_id())
+        return json.dumps(message)
+
+    def _issued_upload_id(self):
+        for payload in reversed(self.sent):
+            issued = json.loads(payload).get("upload_id")
+            if issued:
+                return issued
+        return "never-issued"
+
+
 class _HerdrStub:
     """Stands in for run_herdr, answering per named session and recording calls."""
 
@@ -1367,6 +1396,101 @@ class RelaySessionRoutingTests(unittest.TestCase):
             result_run.assert_called_once_with(
                 "pane", "send-keys", "w1:p4", "Enter", remote=None, session="mxdb"
             )
+
+    def _dispatch_many(self, relay, script, run_result=None):
+        """Walk a whole conversation on one connection."""
+        stub = _HerdrStub(THREE_SESSIONS, PANES_BY_SESSION)
+        ws = _ScriptedWebSocket(script)
+        completed = run_result or subprocess.CompletedProcess([], 0, stdout="", stderr="")
+        with mock.patch.object(relay, "send_current_snapshot", new=mock.AsyncMock()), \
+             mock.patch.object(relay, "run_herdr", stub), \
+             mock.patch.object(relay, "run_herdr_result", return_value=completed) as result_run:
+            asyncio.run(relay.handle_client(ws))
+        return stub, result_run, ws
+
+    @staticmethod
+    def _replies(ws):
+        return [json.loads(payload) for payload in ws.sent]
+
+    def test_an_upload_walks_begin_chunk_commit(self):
+        with loaded_relay() as relay:
+            self._register_sessions(relay)
+            body = b"ciao dal telefono"
+            _, result_run, ws = self._dispatch_many(relay, [
+                {"type": "attachment_begin", "request_id": "u1", "pane_id": "mxdb:w1:p1",
+                 "name": "nota.txt", "mime": "text/plain", "size": len(body)},
+                {"type": "attachment_chunk", "index": 0,
+                 "data": base64.b64encode(body).decode()},
+                {"type": "attachment_commit", "text": "leggi questa nota"},
+            ])
+
+            replies = self._replies(ws)
+            self.assertTrue(any(r.get("upload_id") for r in replies), replies)
+            commit = [r for r in replies if r.get("command") == "attachment_commit"]
+            self.assertTrue(commit and commit[-1]["ok"], replies)
+
+            prompt = result_run.call_args[0][3]
+            self.assertIn("leggi questa nota", prompt)
+            self.assertIn(".txt", prompt)
+            self.assertEqual(relay.active_uploads, {})
+            self.assertEqual(relay.upload_quota.pending_bytes, 0)
+
+    def test_a_chunk_without_a_begin_is_refused(self):
+        with loaded_relay() as relay:
+            self._register_sessions(relay)
+            _, _, ws = self._dispatch_many(relay, [
+                {"type": "attachment_chunk", "upload_id": "never-issued",
+                 "index": 0, "data": base64.b64encode(b"abc").decode()},
+            ])
+            self.assertEqual(self._replies(ws)[-1]["type"], "error")
+
+    def test_an_out_of_order_index_aborts_the_upload(self):
+        with loaded_relay() as relay:
+            self._register_sessions(relay)
+            _, _, ws = self._dispatch_many(relay, [
+                {"type": "attachment_begin", "request_id": "u2", "pane_id": "mxdb:w1:p1",
+                 "name": "a.txt", "mime": "text/plain", "size": 6},
+                {"type": "attachment_chunk", "index": 0, "data": base64.b64encode(b"abc").decode()},
+                {"type": "attachment_chunk", "index": 2, "data": base64.b64encode(b"def").decode()},
+            ])
+            self.assertEqual(self._replies(ws)[-1]["type"], "error")
+            self.assertEqual(relay.active_uploads, {})
+            self.assertEqual(relay.upload_quota.pending_bytes, 0)
+
+    def test_a_second_upload_on_one_connection_is_refused(self):
+        with loaded_relay() as relay:
+            self._register_sessions(relay)
+            begin = {"type": "attachment_begin", "pane_id": "mxdb:w1:p1",
+                     "name": "a.txt", "mime": "text/plain", "size": 3}
+            _, _, ws = self._dispatch_many(relay, [
+                {**begin, "request_id": "u3"}, {**begin, "request_id": "u4"},
+            ])
+            self.assertEqual(self._replies(ws)[-1]["type"], "error")
+
+    def test_abort_frees_the_reservation_and_the_temporary(self):
+        with loaded_relay() as relay:
+            self._register_sessions(relay)
+            _, _, ws = self._dispatch_many(relay, [
+                {"type": "attachment_begin", "request_id": "u5", "pane_id": "mxdb:w1:p1",
+                 "name": "a.txt", "mime": "text/plain", "size": 6},
+                {"type": "attachment_chunk", "index": 0, "data": base64.b64encode(b"abc").decode()},
+                {"type": "attachment_abort"},
+            ])
+            self.assertTrue(self._replies(ws)[-1]["ok"])
+            self.assertEqual(relay.active_uploads, {})
+            self.assertEqual(relay.upload_quota.pending_bytes, 0)
+            leftovers = list(Path(relay.attachment_store.directory).glob("*.part"))
+            self.assertEqual(leftovers, [])
+
+    def test_a_declaration_the_relay_refuses_never_reserves_anything(self):
+        with loaded_relay() as relay:
+            self._register_sessions(relay)
+            _, _, ws = self._dispatch_many(relay, [
+                {"type": "attachment_begin", "request_id": "u6", "pane_id": "mxdb:w1:p1",
+                 "name": "huge.pdf", "mime": "application/pdf", "size": 40 * 1024 * 1024},
+            ])
+            self.assertEqual(self._replies(ws)[-1]["type"], "error")
+            self.assertEqual(relay.upload_quota.pending_bytes, 0)
 
     def test_agent_prompt_is_addressed_to_the_owning_session(self):
         with loaded_relay() as relay:
