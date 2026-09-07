@@ -124,6 +124,76 @@ def decode_attachment(attachment):
     return data, extension
 
 
+class UploadSink:
+    """Collects one upload's chunks in a temporary beside its destination.
+
+    Bytes are streamed as they arrive rather than held in memory, and any break
+    in the sequence abandons the whole upload: the WebSocket guarantees order,
+    so a gap or a repeat means something is wrong, not merely late.
+    """
+
+    def __init__(self, directory, extension, *, total, mime):
+        self.directory = Path(directory).expanduser().absolute()
+        self.extension = extension
+        self.total = total
+        self.mime = mime
+        self.received = 0
+        self.next_index = 0
+        self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+        fd, name = tempfile.mkstemp(prefix="upload-", suffix=".part", dir=self.directory)
+        self.temp_path = Path(name)
+        self._stream = os.fdopen(fd, "wb")
+
+    def write(self, index, data):
+        try:
+            if self._stream is None:
+                raise AttachmentError("This upload is no longer open")
+            if index != self.next_index:
+                raise AttachmentError("Attachment chunks arrived out of order")
+            if self.received + len(data) > self.total:
+                raise AttachmentError("Attachment is larger than it declared")
+            self._stream.write(data)
+            self.received += len(data)
+            self.next_index += 1
+        except Exception:
+            self.abort()
+            raise
+
+    def finish(self):
+        """Seal the upload: the total must match, and the bytes must fit the type."""
+        try:
+            if self._stream is None:
+                raise AttachmentError("This upload is no longer open")
+            if self.received != self.total:
+                raise AttachmentError("Attachment ended before it was complete")
+            self._stream.close()
+            self._stream = None
+            # One bounded read: every ceiling in LIMITS fits comfortably in memory.
+            verify_content(self.temp_path.read_bytes(), self.mime)
+            final = self.temp_path.parent / (self.temp_path.stem + self.extension)
+            os.replace(self.temp_path, final)
+            return final
+        except OSError:
+            self.abort()
+            raise AttachmentError("Private attachment storage is unavailable") from None
+        except Exception:
+            self.abort()
+            raise
+
+    def abort(self):
+        """Leave nothing behind, whether the upload failed or was cancelled."""
+        if self._stream is not None:
+            try:
+                self._stream.close()
+            except OSError:
+                pass
+            self._stream = None
+        try:
+            self.temp_path.unlink(missing_ok=True)
+        except OSError:
+            pass
+
+
 class AttachmentStore:
     def __init__(self, directory, *, max_bytes=MAX_STORAGE_BYTES, max_files=MAX_STORAGE_FILES):
         self.directory = Path(directory).expanduser().absolute()

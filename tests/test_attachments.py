@@ -203,3 +203,73 @@ class DeclarationTests(unittest.TestCase):
         verify(WEBP, "image/webp")
         with self.assertRaises(self.module.AttachmentError):
             verify(JPEG, "image/png")
+
+
+class UploadSinkTests(unittest.TestCase):
+    """Chunks are streamed to a temporary; any break abandons the whole upload."""
+
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location("test_attachment_sink", MODULE_PATH)
+        self.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.module)
+        self.temp = tempfile.TemporaryDirectory()
+        self.addCleanup(self.temp.cleanup)
+        self.directory = Path(self.temp.name) / "attachments"
+        self.directory.mkdir(mode=0o700, parents=True)
+
+    def sink(self, total, mime="text/plain"):
+        return self.module.UploadSink(self.directory, ".txt", total=total, mime=mime)
+
+    def test_chunks_land_in_order(self):
+        sink = self.sink(6)
+        sink.write(0, b"abc")
+        sink.write(1, b"def")
+        self.assertEqual(sink.received, 6)
+
+    def test_a_gap_or_a_repeat_abandons_the_upload(self):
+        gap = self.sink(6)
+        gap.write(0, b"abc")
+        with self.assertRaises(self.module.AttachmentError):
+            gap.write(2, b"def")
+        self.assertFalse(gap.temp_path.exists())
+
+        repeat = self.sink(6)
+        repeat.write(0, b"abc")
+        with self.assertRaises(self.module.AttachmentError):
+            repeat.write(0, b"abc")
+        self.assertFalse(repeat.temp_path.exists())
+
+    def test_a_sender_cannot_exceed_what_it_declared(self):
+        sink = self.sink(4)
+        with self.assertRaises(self.module.AttachmentError):
+            sink.write(0, b"toolong")
+        self.assertFalse(sink.temp_path.exists())
+
+    def test_finishing_short_of_the_declared_total_is_refused(self):
+        sink = self.sink(10)
+        sink.write(0, b"abc")
+        with self.assertRaises(self.module.AttachmentError):
+            sink.finish()
+        self.assertFalse(sink.temp_path.exists())
+
+    def test_finish_verifies_content_and_leaves_no_temporary(self):
+        sink = self.sink(8)
+        sink.write(0, b"ciao\n")
+        sink.write(1, b"qui")
+        final = sink.finish()
+        self.assertTrue(final.exists())
+        self.assertEqual(final.read_bytes(), b"ciao\nqui")
+        self.assertFalse(sink.temp_path.exists())
+
+    def test_finish_refuses_bytes_that_betray_the_declared_type(self):
+        sink = self.module.UploadSink(self.directory, ".pdf", total=5, mime="application/pdf")
+        sink.write(0, b"nope!")
+        with self.assertRaises(self.module.AttachmentError):
+            sink.finish()
+        self.assertFalse(sink.temp_path.exists())
+
+    def test_abort_removes_the_temporary(self):
+        sink = self.sink(3)
+        sink.write(0, b"ab")
+        sink.abort()
+        self.assertFalse(sink.temp_path.exists())
