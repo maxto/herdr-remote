@@ -87,6 +87,10 @@ echo "10c. web app fullscreen controls"
 node "$DIR/tests/test_web_fullscreen.js"
 assert_eq "$?" "0" "fullscreen controls"
 
+echo "10d. terminal viewport"
+node "$DIR/tests/test_terminal_viewport.js"
+assert_eq "$?" "0" "terminal viewport"
+
 # --- macOS app ---
 echo ""
 echo "=== macOS app ==="

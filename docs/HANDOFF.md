@@ -31,6 +31,13 @@ from Android Chrome. The relay must be restarted after pulling the change that
 adds their HTTP routes; later edits to the assets are read on request. See
 the Android installation steps in `docs/TAILSCALE.md`.
 
+Selecting a terminal opens a dedicated responsive view. `TerminalViewport` in
+`web/index.html` follows the visual viewport (including keyboard changes), while
+`FullscreenControls` owns the browser API and both fullscreen buttons. Refreshes
+triggered by agent messages use `openTerminal(activePane, false)` so they cannot
+force fullscreen after the user exits. Output wraps unless **Keep columns** is
+enabled; no remote pane resize is sent.
+
 `docs/TAILSCALE.md` covers serve versus funnel and the node attribute that gates
 funnel.
 
@@ -101,6 +108,12 @@ it is configuration-driven — but the credentials and its service are gone.
   task through to the end.
 - Tests live in `tests/`, run with `sh tests/run.sh`. Behaviour that mattered
   enough to debug once has a test; copy does not.
+- Optional layout checks use Playwright and synthetic data:
+  `uv run --with playwright python tests/check_terminal_layout.py`, after
+  installing its Chromium with
+  `uv run --with playwright python -m playwright install chromium --only-shell`.
+  They exercise phone/tablet sizes, fullscreen, wrapping and constrained keyboard
+  space. Actual Android keyboard and system-bar behaviour still needs a device.
 - Never write credentials, tokens, personal hostnames or absolute home paths
   into this repository.
 

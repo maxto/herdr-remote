@@ -76,10 +76,23 @@ Open your own dashboard's HTTPS address in Chrome, reload it, then choose
 the new icon: it opens in its own window without Chrome's address bar. Android's
 status and navigation bars may remain visible.
 
-For more space, tap the fullscreen icon in the dashboard header. Tap it again
-to leave fullscreen; the button also updates if Android exits the mode. The
-control is shown only when the browser supports fullscreen. System gestures
-and the keyboard can still bring Android controls back into view.
+Selecting an agent opens its terminal in a dedicated view, hides the dashboard
+header and requests fullscreen. The terminal uses the available screen width
+and height on phones and tablets in either orientation. Its command field stays
+within the visible area when the on-screen keyboard reduces that space; extra
+key panels scroll when space is limited.
+
+Output wraps to the screen width by default. **Keep columns** in the terminal
+toolbar preserves original line layout for tables and structured output, with
+horizontal scrolling. Both modes preserve ANSI colours and leave the terminal
+on the host machine at its existing size.
+
+The back arrow returns to the agent list and leaves fullscreen. The terminal's
+fullscreen button can toggle the browser mode without closing the terminal;
+it updates if Android exits the mode. Fullscreen controls are shown only when
+supported. If the browser refuses fullscreen, the dedicated terminal still
+fills the available app window. System gestures and the keyboard can bring
+Android controls back into view.
 
 An older home-screen shortcut may still open a Chrome tab. Install from the
 updated page and use the newly installed app; the old shortcut can then be
