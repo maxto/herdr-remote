@@ -1427,6 +1427,21 @@ class RelaySessionRoutingTests(unittest.TestCase):
             })
             self.assertEqual(order, ["confirmation-sent", "command-returned"])
 
+    def test_the_keepalive_lets_a_sleeping_phone_miss_pings_and_return(self):
+        """A phone that suspends briefly must not lose its socket.
+
+        The library defaults (20s interval, 20s timeout) drop a peer that misses
+        a single ping, which is ordinary behaviour for a screen-off phone.
+        """
+        with loaded_relay() as relay:
+            self.assertGreater(relay.WS_PING_INTERVAL, 0)
+            self.assertGreaterEqual(
+                relay.WS_PING_TIMEOUT, relay.WS_PING_INTERVAL * 3,
+                "a client must survive missing at least two consecutive pings",
+            )
+            # Short enough that a Cloudflare or Tailscale tunnel stays warm.
+            self.assertLessEqual(relay.WS_PING_INTERVAL, 30)
+
     def test_a_late_prompt_failure_is_reported_with_its_request_id(self):
         """Confirming on acceptance means a failure has to travel on its own."""
         with loaded_relay() as relay:

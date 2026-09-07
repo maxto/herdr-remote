@@ -68,6 +68,13 @@ POLL_INTERVAL = 2
 # A working agent can hold the command open longer than a phone is willing
 # to wait, which made delivered prompts look like failures.
 PROMPT_ACK_GRACE = 3
+# Keepalive for the WebSocket. The library defaults (20s interval, 20s timeout)
+# assume a server peer: a phone that suspends for a moment — screen off, network
+# asleep — stops answering pings and gets torn down. The timeout leaves room for
+# a client to miss a few pings and come back, while the interval stays short
+# enough to keep a Cloudflare or Tailscale tunnel from idling out.
+WS_PING_INTERVAL = int(os.environ.get("HERDR_RELAY_PING_INTERVAL", "20"))
+WS_PING_TIMEOUT = int(os.environ.get("HERDR_RELAY_PING_TIMEOUT", "90"))
 AUTH_TOKEN = os.environ.get("HERDR_RELAY_TOKEN", "")  # Optional: shared secret for relay auth
 AUTH_PROTOCOL = 1
 AUTH_TIMEOUT_SECONDS = 5
@@ -1636,7 +1643,12 @@ async def main():
         except OSError:
             log.warning("UDP 8376 in use, plugin push disabled")
         tasks = [asyncio.create_task(poll_loop()), asyncio.create_task(event_push())]
-        server = await serve(handle_client, RELAY_HOST, WS_PORT, process_request=process_request)
+        server = await serve(
+            handle_client, RELAY_HOST, WS_PORT,
+            process_request=process_request,
+            ping_interval=WS_PING_INTERVAL,
+            ping_timeout=WS_PING_TIMEOUT,
+        )
         local_sessions = list_local_sessions()
         hosts = [
             f"local:{session}" if session else "local" for session in local_sessions
