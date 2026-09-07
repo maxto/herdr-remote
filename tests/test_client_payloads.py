@@ -6,6 +6,15 @@ ROOT = Path(__file__).resolve().parents[1]
 
 
 class ClientPayloadTests(unittest.TestCase):
+    def test_web_submits_normal_text_as_one_agent_prompt(self):
+        source = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
+        body = source[source.index("async function sendText()"):]
+        body = body[:body.index("\nfunction sendKey(")]
+
+        self.assertIn("TerminalComposer.send", body)
+        self.assertNotIn("type:'send_text'", body)
+        self.assertNotIn("type:'send_keys'", body)
+
     def test_web_preserves_and_sends_omp_question_state(self):
         source = (ROOT / "web" / "index.html").read_text(encoding="utf-8")
 

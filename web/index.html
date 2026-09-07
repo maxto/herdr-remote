@@ -104,7 +104,7 @@ body.terminal-open > .header { display: none; }
 .terminal-view { display: none; flex-direction: column; position: fixed; top: var(--terminal-top, 0px); left: var(--terminal-left, 0px); width: var(--terminal-width, 100%); height: var(--terminal-height, 100dvh); padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); overflow: hidden; background: var(--bg); z-index: 50; }
 .terminal-view.active { display: flex; }
 .term-header { padding: calc(4px + env(safe-area-inset-top, 0px)) 48px 4px 4px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
-.terminal-view.controls-hidden > :is(.term-header, .term-search, .term-input, .term-keys, .quick-actions, .input-modes, .attachment-preview, .composer-status) { display: none !important; }
+.terminal-view.controls-hidden > :is(.term-header, .term-search, .term-input, .term-keys, .quick-actions, .input-modes, .composer-status) { display: none !important; }
 .terminal-controls-toggle { position: absolute; top: calc(4px + env(safe-area-inset-top, 0px)); right: calc(4px + env(safe-area-inset-right, 0px)); width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); cursor: pointer; z-index: 20; }
 .terminal-controls-toggle:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .terminal-view.compact:not(.controls-hidden) .terminal-controls-toggle { top: env(safe-area-inset-top, 0px); }
@@ -145,16 +145,9 @@ body.terminal-open > .header { display: none; }
 .input-modes button:focus-visible { outline: 2px solid var(--blue); }
 .terminal-view.searching .input-modes { display: none; }
 #quickDock .quick-actions { max-height: none; padding: 0 0 8px; }
-.attachment-preview { display: flex; align-items: center; gap: 8px; padding: 4px 12px; flex-shrink: 0; background: var(--surface); }
-.attachment-preview[hidden], .composer-status[hidden] { display: none; }
-.attachment-preview img { width: 40px; height: 40px; object-fit: contain; }
-.attachment-preview span { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; }
-.attachment-preview button { width: 36px; height: 36px; border: none; border-radius: 6px; background: var(--bg); color: var(--text); cursor: pointer; }
+.composer-status[hidden] { display: none; }
 .composer-status { margin: 0; padding: 4px 12px; font-size: 12px; background: var(--surface); color: var(--text); flex-shrink: 0; max-height: 48px; overflow: auto; }
 .terminal-view.compact .term-content { min-height: 26px; }
-.terminal-view.compact .attachment-preview { min-height: 24px; padding: 0 8px; }
-.terminal-view.compact .attachment-preview img { display: none; }
-.terminal-view.compact .attachment-preview button { width: 24px; height: 24px; }
 .terminal-view.compact .composer-status { position: absolute; top: var(--term-header-height, 41px); left: env(safe-area-inset-left, 0px); right: env(safe-area-inset-right, 0px); z-index: 15; max-height: 44px; box-shadow: 0 1px 4px rgba(0,0,0,0.25); }
 #cmdPalette { position: fixed; inset: 0; z-index: 100; }
 #cmdPalette > div:last-child { max-height: 50dvh; }
@@ -262,15 +255,8 @@ body.terminal-open #cmdPalette > div:last-child { max-height: 90%; }
     <button onclick="toggleSearch()" aria-label="Close"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
   </div>
   <div class="term-content" id="termContent">Loading…</div>
-  <div class="attachment-preview" id="attachmentPreview" hidden>
-    <img id="attachmentImage" alt="Selected image preview">
-    <span id="attachmentName"></span>
-    <button id="removeAttachment" type="button" aria-label="Remove image">×</button>
-  </div>
   <p id="composerStatus" class="composer-status" role="status" hidden></p>
-  <input id="attachmentInput" type="file" accept="image/png,image/jpeg,image/webp" hidden>
   <div class="term-input" id="termInputBar">
-    <button id="addAttachment" type="button" aria-label="Attach image" title="Attach screenshot or image" style="padding:8px 12px;border:1px solid var(--border);border-radius:6px;background:var(--bg);color:var(--text);font-size:22px">＋</button>
     <input id="termInput" placeholder="Type…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
     <button id="sendTextButton" onclick="sendText()" aria-label="Send" style="padding:10px 14px;border-radius:6px;border:none;background:var(--blue);color:#fff;flex-shrink:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
   </div>
@@ -500,75 +486,44 @@ const TerminalInput = (() => {
 })();
 </script>
 <script src="./security.js"></script>
-<script id="terminalAttachments">
-const TerminalAttachments = (() => {
+<script id="terminalComposer">
+const TerminalComposer = (() => {
   const drafts = new Map();
   const input = document.getElementById('termInput');
-  const picker = document.getElementById('attachmentInput');
-  const preview = document.getElementById('attachmentPreview');
-  const image = document.getElementById('attachmentImage');
-  const name = document.getElementById('attachmentName');
   const status = document.getElementById('composerStatus');
-  const add = document.getElementById('addAttachment');
-  const remove = document.getElementById('removeAttachment');
   const sendButton = document.getElementById('sendTextButton');
   let pane = null;
 
+  function draftFor(id) {
+    if (!drafts.has(id)) {
+      drafts.set(id, { text: '', status: '', pending: false, requestId: null, timer: null });
+    }
+    return drafts.get(id);
+  }
+
   function render() {
     const draft = drafts.get(pane);
-    preview.hidden = !draft?.file;
-    if (draft?.url) image.src = draft.url;
-    else image.removeAttribute('src');
-    name.textContent = draft?.file?.name || '';
     status.textContent = draft?.status || '';
     status.hidden = !draft?.status;
-    for (const control of [input, add, remove, sendButton]) control.disabled = Boolean(draft?.pending);
+    for (const control of [input, sendButton]) control.disabled = Boolean(draft?.pending);
   }
 
   function open(id) {
     if (pane === id) return;
     if (drafts.has(pane)) drafts.get(pane).text = input.value;
     pane = id;
-    if (!drafts.has(id)) drafts.set(id, { text: '', file: null, url: null, status: '', pending: false });
-    input.value = drafts.get(id).text;
-    picker.value = '';
+    input.value = draftFor(id).text;
     render();
   }
 
-  function clearImage(draft) {
-    if (draft.url) URL.revokeObjectURL(draft.url);
-    draft.file = null;
-    draft.url = null;
-  }
-
-  add.addEventListener('click', () => {
-    if (!pane || drafts.get(pane)?.pending) return;
-    TerminalInput.reset();
-    input.blur();
-    picker.click();
-  });
-  picker.addEventListener('change', () => {
-    const draft = drafts.get(pane);
-    const file = picker.files[0];
-    picker.value = '';
-    if (!draft || !file || draft.pending) return;
-    if (!['image/png', 'image/jpeg', 'image/webp'].includes(file.type) || !file.size || file.size > 5 * 1024 * 1024) {
-      draft.status = 'Choose a PNG, JPEG or WebP image up to 5 MiB.';
-      render();
-      return;
-    }
-    clearImage(draft);
-    draft.file = file;
-    draft.url = URL.createObjectURL(file);
-    draft.status = '';
-    render();
-  });
-  remove.addEventListener('click', () => {
+  input.addEventListener('input', () => {
     const draft = drafts.get(pane);
     if (!draft || draft.pending) return;
-    clearImage(draft);
-    draft.status = '';
-    render();
+    draft.text = input.value;
+    if (draft.status) {
+      draft.status = '';
+      render();
+    }
   });
 
   function fail(draft, message) {
@@ -578,39 +533,35 @@ const TerminalAttachments = (() => {
     render();
   }
 
-  async function send(socket, id) {
-    const draft = drafts.get(id);
-    if (!draft?.file) return false;
+  function send(socket, id) {
+    if (!id) return false;
+    const draft = draftFor(id);
+    if (pane === id) draft.text = input.value;
+    if (!draft.text) return false;
     if (draft.pending) return true;
-    draft.text = input.value;
     if (!socket || socket.readyState !== 1) {
-      fail(draft, 'Not connected. Image and text have been kept.');
+      fail(draft, 'Not connected. Your text has been kept.');
       return true;
     }
-    if (draft.text.length > 1000) {
-      fail(draft, 'Keep the message with your image within 1000 characters.');
+    if (draft.text.length > 10000) {
+      fail(draft, 'Keep the message within 10000 characters.');
       return true;
     }
     draft.pending = true;
-    draft.status = 'Sending image…';
+    draft.status = 'Sending…';
     draft.requestId = crypto.randomUUID();
     const requestId = draft.requestId;
+    clearTimeout(draft.timer);
+    draft.timer = setTimeout(() => fail(
+      draft, 'Delivery not confirmed. Check the terminal before retrying; your text has been kept.'
+    ), 20000);
     render();
     try {
-      const data = await new Promise((resolve, reject) => {
-        const reader = new FileReader();
-        reader.onload = () => resolve(reader.result.split(',')[1]);
-        reader.onerror = () => reject(new Error('Could not read this image.'));
-        reader.onabort = () => reject(new Error('Image reading was cancelled.'));
-        reader.readAsDataURL(draft.file);
-      });
-      if (!draft.pending || draft.requestId !== requestId) return true;
-      socket.send(JSON.stringify({type: 'send_attachment', request_id: requestId, pane_id: id,
-        text: draft.text, attachment: {name: draft.file.name, mime: draft.file.type, data}}));
-      draft.timer = setTimeout(() => fail(draft,
-        'Delivery not confirmed. Check the terminal before retrying. Image and text have been kept.'), 30000);
+      socket.send(JSON.stringify({
+        type: 'agent_prompt', request_id: requestId, pane_id: id, text: draft.text,
+      }));
     } catch (error) {
-      if (draft.requestId === requestId) fail(draft, error.message || 'Image could not be sent.');
+      if (draft.requestId === requestId) fail(draft, error.message || 'Text could not be sent.');
     }
     return true;
   }
@@ -620,16 +571,16 @@ const TerminalAttachments = (() => {
     const entry = [...drafts].find(([, draft]) => draft.requestId === message.request_id);
     if (!entry) return false;
     const [id, draft] = entry;
-    if (message.type === 'command_result' && message.command !== 'send_attachment') return false;
+    if (message.type === 'command_result' && message.command !== 'agent_prompt') return false;
     clearTimeout(draft.timer);
     draft.pending = false;
     if (message.type === 'error' || !message.ok) {
-      draft.status = message.message || 'Image delivery failed. Image and text have been kept.';
+      draft.status = message.message || 'Text delivery failed. Your text has been kept.';
     } else {
-      clearImage(draft);
       draft.text = '';
       if (pane === id) input.value = '';
-      draft.status = 'Image sent to the agent.';
+      draft.status = '';
+      setTimeout(refreshPane, 500);
     }
     draft.requestId = null;
     render();
@@ -877,7 +828,7 @@ const connectionController = HerdrSecurity.createConnectionController({
   cancelReconnect: clearTimeout,
   onAuthenticated: () => { if(window.cue) cue('ready'); },
   onMessage: handleMessage,
-  onSocketChange: socket => { if (ws && ws !== socket) TerminalAttachments.disconnected(); ws = socket; },
+  onSocketChange: socket => { if (ws && ws !== socket) TerminalComposer.disconnected(); ws = socket; },
   onStatus: setStatus,
   openSocket: url => new WebSocket(url),
   scheduleReconnect: callback => setTimeout(callback, 3000),
@@ -955,7 +906,7 @@ function ansiFragment(input) {
 }
 
 function handleMessage(msg) {
-  if (TerminalAttachments.handleMessage(msg)) return;
+  if (TerminalComposer.handleMessage(msg)) return;
   if (msg.type === 'agents') {
     // Track timeline on status changes
     for (const a of msg.agents) {
@@ -1196,7 +1147,7 @@ function section(title, color, list) {
 }
 
 function openTerminal(paneId) {
-  if (typeof TerminalAttachments !== 'undefined') TerminalAttachments.open(paneId);
+  if (typeof TerminalComposer !== 'undefined') TerminalComposer.open(paneId);
   if (activePane !== paneId) document.getElementById('termContent').textContent = 'Loading…';
   activePane = paneId; paneLines = 200; userScrolledUp = false;
   const a = agents.find(x => x.pane_id===paneId);
@@ -1500,17 +1451,16 @@ function setupLongPress(el, type, id, name) {
 }
 
 async function sendText() {
-  if (await TerminalAttachments.send(ws, activePane)) return;
   const i=document.getElementById('termInput');
-  if(!i.value||!ws||!activePane)return;
+  if(!i.value||!activePane)return;
   const agent=agents.find(a=>a.pane_id===activePane);
   if(agent&&agent.status==='blocked') {
+    if(!ws||ws.readyState!==WebSocket.OPEN)return;
     ws.send(JSON.stringify({type:'respond',pane_id:activePane,prompt_id:agent.prompt_id,text:i.value}));
+    i.value=''; setTimeout(refreshPane,500);
   } else {
-    ws.send(JSON.stringify({type:'send_text',pane_id:activePane,text:i.value}));
-    ws.send(JSON.stringify({type:'send_keys',pane_id:activePane,keys:['Enter']}));
+    TerminalComposer.send(ws, activePane);
   }
-  i.value=''; setTimeout(refreshPane,500);
 }
 function sendKey(k){if(!ws||!activePane)return;ws.send(JSON.stringify({type:'send_keys',pane_id:activePane,keys:[k]}));setTimeout(refreshPane,300);}
 function sendKeys(k){if(!ws||!activePane)return;ws.send(JSON.stringify({type:'send_keys',pane_id:activePane,keys:k}));setTimeout(refreshPane,300);}
@@ -1583,12 +1533,11 @@ function sendQueuedKeys() {
 function toggleQuickDock() { TerminalInput.reset(); }
 
 function quickSend(text) {
-  if (!ws || !activePane) return;
+  if (!activePane) return;
   if(window.cue) cue('success');
-  ws.send(JSON.stringify({type:'send_text', pane_id: activePane, text: text}));
-  ws.send(JSON.stringify({type:'send_keys', pane_id: activePane, keys:['Enter']}));
+  document.getElementById('termInput').value = text;
+  sendText();
   document.getElementById('quickDock').style.display = 'none';
-  setTimeout(refreshPane, 500);
 }
 
 
@@ -1720,10 +1669,9 @@ function filterCommands() {
 
 function runCommand(cmd) {
   closePalette();
-  if (!ws || !activePane) return;
-  ws.send(JSON.stringify({type:'send_text', pane_id: activePane, text: cmd}));
-  ws.send(JSON.stringify({type:'send_keys', pane_id: activePane, keys:['Enter']}));
-  setTimeout(refreshPane, 500);
+  if (!activePane) return;
+  document.getElementById('termInput').value = cmd;
+  sendText();
 }
 
 // --- Web Push ---

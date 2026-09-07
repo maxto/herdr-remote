@@ -18,7 +18,7 @@ Clients (web/mac/ios/telegram/tui)
    herdr CLI (local or SSH to HERDR_REMOTES)
 ```
 
-The relay (`relay/herdr_relay.py`) is the central hub: it polls herdr for agent state, accepts push events via HTTP POST and UDP, and broadcasts to connected WebSocket clients. Clients send `respond`, `read_pane`, `send_keys`, and `send_text` messages back through the relay to control agents.
+The relay (`relay/herdr_relay.py`) is the central hub: it polls herdr for agent state, accepts push events via HTTP POST and UDP, and broadcasts to connected WebSocket clients. Clients send `respond`, `agent_prompt`, `read_pane`, `send_keys`, and `send_text` messages back through the relay to control agents.
 
 ## Components
 
@@ -86,7 +86,7 @@ browser origin outside the allowlist is refused with `403` before the upgrade.
 
 **Server → Client:** `agents` (complete state snapshot), `agent_update` (single-pane state merge), `blocked` (approval prompt), `pane_content` (terminal read), `timeline` (status log), `command_result` / `error` (request result)
 
-**Client → Server:** `respond` (send text to agent), `read_pane` (request terminal content), `send_keys` (send key sequences), `send_text` (raw text without newline), `send_attachment` (image plus optional prompt), `get_timeline` (status log), `push_subscribe` (register for web push)
+**Client → Server:** `respond` (answer a blocked agent), `agent_prompt` (submit text to an agent), `read_pane` (request terminal content), `send_keys` (send key sequences), `send_text` (raw text without newline), `get_timeline` (status log), `push_subscribe` (register for web push)
 
 ## Deployment
 

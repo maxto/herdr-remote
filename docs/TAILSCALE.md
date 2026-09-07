@@ -95,12 +95,9 @@ provides a number pad, and **Commands** shows quick replies and agent commands.
 Only one keyboard area is shown at a time. The command draft is preserved while
 switching modes, and custom panels scroll when the available height is small.
 
-Use **＋** to choose a PNG, JPEG or WebP screenshot up to 5 MiB. The image is
-previewed locally and can be removed before sending. The relay stores an accepted
-image in its private data directory and asks the selected local agent to inspect
-that path together with the typed message. Failed and unconfirmed sends retain
-the image and text for review or retry. Image attachments to SSH panes are not
-supported because their filesystem cannot access a path stored on the relay host.
+Press **Send** to submit the text directly to the selected agent. The draft stays
+visible until the relay confirms that the agent accepted it, and remains available
+for retry after a connection or delivery error. Each pane keeps its own draft.
 
 Output wraps to the screen width by default. **Keep columns** in the terminal
 toolbar preserves original line layout for tables and structured output, with

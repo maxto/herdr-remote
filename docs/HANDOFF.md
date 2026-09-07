@@ -43,18 +43,14 @@ no separate manual refresh button. Incoming updates preserve the controls state.
 `TerminalInput` makes **ABC**, **Keys**, **123** and **Commands** mutually
 exclusive. It measures the last native-keyboard height when Chromium exposes it,
 and custom panels reuse that bounded space. In compact view, transient composer
-status overlays output, image preview becomes a filename chip and terminal output
-may shrink to 26px so input controls stay within the visual viewport.
+status overlays output and terminal output may shrink to 26px so input controls
+stay within the visual viewport.
 
-`send_attachment` is an authenticated WebSocket operation. The browser sends one
-PNG, JPEG or WebP image (5 MiB decoded maximum) with an optional 1000-character
-message and waits for a request-scoped acknowledgement. The relay validates the
-container, writes a generated owner-only file below its data directory, then runs
-`herdr agent prompt` for the selected local pane/session with the absolute path.
-SSH panes are rejected before writing. Storage stops accepting images at 100 files
-or 50 MiB and never evicts an image an agent may still need. Override the parent
-directory with `HERDR_RELAY_DATA_DIR`; the default is the platform's normal user
-data location. The relay must restart after this protocol handler changes.
+`TerminalComposer` submits ordinary text as one authenticated `agent_prompt`
+operation and waits for its request-scoped acknowledgement. This avoids a second,
+timing-sensitive Enter event. Drafts belong to their pane and stay visible while
+delivery is pending or after an error; the browser clears a draft only after its
+matching success response.
 
 `docs/TAILSCALE.md` covers serve versus funnel and the node attribute that gates
 funnel.

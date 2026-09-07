@@ -28,34 +28,6 @@ except ModuleNotFoundError:
     _agent_state_spec.loader.exec_module(_agent_state_module)
     complete_agent_update_message = _agent_state_module.complete_agent_update_message
 
-try:
-    from attachments import AttachmentError, AttachmentStore
-except ModuleNotFoundError:
-    from importlib.util import module_from_spec, spec_from_file_location
-
-    _attachments_spec = spec_from_file_location(
-        "herdr_remote_attachments", os.path.join(os.path.dirname(__file__), "attachments.py")
-    )
-    _attachments_module = module_from_spec(_attachments_spec)
-    _attachments_spec.loader.exec_module(_attachments_module)
-    AttachmentError = _attachments_module.AttachmentError
-    AttachmentStore = _attachments_module.AttachmentStore
-
-
-def _get_data_dir():
-    if sys.platform == "darwin":
-        return os.path.expanduser("~/Library/Application Support/herdr-remote")
-    if sys.platform == "win32":
-        base = os.environ.get("LOCALAPPDATA", os.path.expanduser("~/AppData/Local"))
-        return os.path.join(base, "herdr-remote")
-    base = os.environ.get("XDG_DATA_HOME", os.path.expanduser("~/.local/share"))
-    return os.path.join(base, "herdr-remote")
-
-
-DATA_DIR = os.environ.get("HERDR_RELAY_DATA_DIR", _get_data_dir())
-attachment_store = AttachmentStore(os.path.join(DATA_DIR, "attachments"))
-WS_MAX_SIZE = 8 * 1024 * 1024  # One 5 MiB image, base64 plus bounded request metadata.
-
 def _get_log_dir():
     if sys.platform == "darwin":
         return os.path.expanduser("~/Library/Logs/herdr-remote")
@@ -92,6 +64,10 @@ REMOTE_HERDR = os.environ.get("HERDR_REMOTE_BIN", "herdr")
 WS_PORT = int(os.environ.get("HERDR_RELAY_PORT", "8375"))
 RELAY_HOST = os.environ.get("HERDR_RELAY_HOST", "127.0.0.1")
 POLL_INTERVAL = 2
+# How long to wait for `herdr agent prompt` before confirming acceptance.
+# A working agent can hold the command open longer than a phone is willing
+# to wait, which made delivered prompts look like failures.
+PROMPT_ACK_GRACE = 3
 AUTH_TOKEN = os.environ.get("HERDR_RELAY_TOKEN", "")  # Optional: shared secret for relay auth
 AUTH_PROTOCOL = 1
 AUTH_TIMEOUT_SECONDS = 5
@@ -1268,42 +1244,30 @@ async def authenticate_client(ws) -> bool:
     return True
 
 
-def submit_attachment(message):
-    """Validate, store and submit in a worker so disk/CLI work cannot block WS."""
-    request_id = message.get("request_id")
-    error = {"type": "error", "request_id": request_id if isinstance(request_id, str) else None}
-    if not isinstance(request_id, str) or not request_id or len(request_id) > 128:
-        return {**error, "message": "Invalid image request_id"}
-    pane_id = message.get("pane_id")
-    if not isinstance(pane_id, str):
-        return {**error, "message": "unknown pane_id"}
-    target = resolve_pane(pane_id)
-    if target is None:
-        return {**error, "message": "unknown pane_id"}
-    if target.kwargs.get("remote"):
-        return {**error, "message": "Image attachments are not supported for SSH panes"}
-    text = message.get("text", "")
-    if not isinstance(text, str) or len(text) > 1000:
-        return {**error, "message": "Image prompt text must be at most 1000 characters"}
+async def report_late_prompt_failure(ws, task, pane_id, request_id):
+    """Report a prompt that was confirmed on acceptance but then failed.
+
+    Confirmation goes out as soon as the agent holds the command past the
+    grace window, so a failure has to travel on its own afterwards.
+    """
     try:
-        path = attachment_store.save(message.get("attachment"))
-    except AttachmentError as exc:
-        return {**error, "message": str(exc)}
-    prompt = f"Inspect the attached local image at this absolute path:\n{path}"
-    if text:
-        prompt += f"\n\n{text}"
+        result = await task
+    except Exception as exc:
+        log.warning("agent_prompt command failed for pane %s: %s", pane_id, exc)
+    else:
+        if result.returncode == 0:
+            return
+        log.warning(
+            "agent_prompt command failed for pane %s with exit %s",
+            pane_id, result.returncode,
+        )
+    message = {"type": "error", "message": "Agent prompt submission failed"}
+    if isinstance(request_id, str) and request_id:
+        message["request_id"] = request_id
     try:
-        result = run_herdr_result("agent", "prompt", target.herdr_pane_id, prompt, **target.kwargs)
-        accepted = result.returncode == 0
+        await ws.send(json.dumps(message))
     except Exception:
-        accepted = False
-    if not accepted:
-        try:
-            path.unlink(missing_ok=True)
-        except OSError:
-            log.warning("Unable to remove failed image attachment")
-        return {**error, "message": "Image prompt submission failed"}
-    return {"type": "command_result", "command": "send_attachment", "request_id": request_id, "ok": True}
+        log.debug("Could not report late agent_prompt failure for pane %s", pane_id)
 
 
 async def handle_client(ws):
@@ -1485,10 +1449,6 @@ async def handle_client(ws):
                 if request_id:
                     response["request_id"] = request_id
                 await ws.send(json.dumps(response))
-            elif msg_type == "send_attachment":
-                response = await asyncio.to_thread(submit_attachment, msg)
-                audit("send_attachment", ip, device, "", f"ok={response.get('ok', False)}")
-                await ws.send(json.dumps(response))
             elif msg_type == "send_text":
                 target = resolve_pane(msg["pane_id"])
                 if target is None:
@@ -1504,19 +1464,69 @@ async def handle_client(ws):
                 run_herdr("pane", "send-text", target.herdr_pane_id, text, **target.kwargs)
             elif msg_type == "agent_prompt":
                 # Use 'herdr agent prompt' for proper submission (works with Codex, Claude, etc.)
-                target = resolve_pane(msg["pane_id"])
+                request_id = msg.get("request_id")
+
+                def prompt_error(message):
+                    response = {"type": "error", "message": message}
+                    if isinstance(request_id, str) and request_id:
+                        response["request_id"] = request_id
+                    return response
+
+                if request_id is not None and (
+                    not isinstance(request_id, str) or not request_id or len(request_id) > 128
+                ):
+                    await ws.send(json.dumps(prompt_error("Invalid prompt request_id")))
+                    continue
+                requested_pane_id = msg.get("pane_id")
+                if not isinstance(requested_pane_id, str):
+                    await ws.send(json.dumps(prompt_error("unknown pane_id")))
+                    continue
+                target = resolve_pane(requested_pane_id)
                 if target is None:
-                    await ws.send(json.dumps({"type": "error", "message": "unknown pane_id"}))
+                    await ws.send(json.dumps(prompt_error("unknown pane_id")))
                     continue
                 pane_id = target.pane_id
                 text = msg.get("text", "")
-                if not text or len(text) > 10000:
-                    await ws.send(json.dumps({"type": "error", "message": "text empty or too long"}))
+                if not isinstance(text, str) or not text or len(text) > 10000:
+                    await ws.send(json.dumps(prompt_error("text empty or too long")))
                     continue
-                log.info("Agent prompt from %s (%s): pane=%s text=%r", ip, device, pane_id, text[:100])
-                audit("agent_prompt", ip, device, pane_id, f"text={text[:100]!r}")
-                run_herdr("agent", "prompt", target.herdr_pane_id, text, **target.kwargs)
-                await ws.send(json.dumps({"type": "command_result", "command": "agent_prompt", "ok": True}))
+                log.info("Agent prompt from %s (%s): pane=%s chars=%d", ip, device, pane_id, len(text))
+                audit("agent_prompt", ip, device, pane_id, f"chars={len(text)}")
+                prompt_task = asyncio.create_task(asyncio.to_thread(
+                    run_herdr_result,
+                    "agent", "prompt", target.herdr_pane_id, text, **target.kwargs,
+                ))
+                try:
+                    result = await asyncio.wait_for(
+                        asyncio.shield(prompt_task), PROMPT_ACK_GRACE
+                    )
+                except asyncio.TimeoutError:
+                    # The agent is still busy. Confirm acceptance now so the
+                    # client stops waiting on a prompt that did arrive, and let
+                    # any failure follow separately.
+                    response = {"type": "command_result", "command": "agent_prompt", "ok": True}
+                    if request_id:
+                        response["request_id"] = request_id
+                    await ws.send(json.dumps(response))
+                    asyncio.create_task(
+                        report_late_prompt_failure(ws, prompt_task, pane_id, request_id)
+                    )
+                    continue
+                except Exception as exc:
+                    log.warning("agent_prompt command failed for pane %s: %s", pane_id, exc)
+                    await ws.send(json.dumps(prompt_error("Agent prompt submission failed")))
+                    continue
+                if result.returncode != 0:
+                    log.warning(
+                        "agent_prompt command failed for pane %s with exit %s",
+                        pane_id, result.returncode,
+                    )
+                    await ws.send(json.dumps(prompt_error("Agent prompt submission failed")))
+                    continue
+                response = {"type": "command_result", "command": "agent_prompt", "ok": True}
+                if request_id:
+                    response["request_id"] = request_id
+                await ws.send(json.dumps(response))
             elif msg_type == "create_tab":
                 workspace_id = msg.get("workspace_id", "")
                 workspace = resolve_workspace(workspace_id)
@@ -1626,9 +1636,7 @@ async def main():
         except OSError:
             log.warning("UDP 8376 in use, plugin push disabled")
         tasks = [asyncio.create_task(poll_loop()), asyncio.create_task(event_push())]
-        server = await serve(
-            handle_client, RELAY_HOST, WS_PORT, process_request=process_request, max_size=WS_MAX_SIZE
-        )
+        server = await serve(handle_client, RELAY_HOST, WS_PORT, process_request=process_request)
         local_sessions = list_local_sessions()
         hosts = [
             f"local:{session}" if session else "local" for session in local_sessions

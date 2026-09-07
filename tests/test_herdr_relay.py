@@ -1,5 +1,4 @@
 import asyncio
-import base64
 from html.parser import HTMLParser
 import importlib.util
 import json
@@ -9,6 +8,7 @@ from pathlib import Path
 import subprocess
 import shutil
 import struct
+import time
 import sys
 import tempfile
 import threading
@@ -831,141 +831,6 @@ class RelayQuestionTests(unittest.TestCase):
             self.assertIn("prompt changed", json.loads(ws.sent[-1])["message"])
 
 
-class RelayAttachmentTests(unittest.TestCase):
-    PNG = base64.b64decode(
-        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aD1sAAAAASUVORK5CYII="
-    )
-
-    def request(self, **changes):
-        return {
-            "type": "send_attachment", "request_id": "image-123", "pane_id": "lab:w1:p1",
-            "text": "Explain this screenshot",
-            "attachment": {"name": "../../private.png", "mime": "image/png",
-                           "data": base64.b64encode(self.PNG).decode("ascii")},
-            **changes,
-        }
-
-    def configure_target(self, relay):
-        relay.known_panes.update({"lab:w1:p1", "other:w1:p1"})
-        relay.pane_herdr_ids.update({"lab:w1:p1": "w1:p1", "other:w1:p1": "w1:p1"})
-        relay.pane_session_map.update({"lab:w1:p1": "lab", "other:w1:p1": "other"})
-
-    def dispatch(self, relay, message):
-        ws = _FakeWebSocket([json.dumps(message)], headers={"X-Herdr-Remote-Command": "1"})
-        asyncio.run(relay.handle_client(ws))
-        return [json.loads(value) for value in ws.sent]
-
-    def test_image_is_stored_privately_and_prompt_routes_to_selected_session_off_loop(self):
-        with loaded_relay() as relay:
-            self.configure_target(relay)
-            main_thread = threading.get_ident()
-            calls = []
-
-            def fake_cli(command, operation, pane_id, prompt, **kwargs):
-                files = list((Path(os.environ["HERDR_RELAY_DATA_DIR"]) / "attachments").iterdir())
-                self.assertEqual(len(files), 1)
-                image = files[0]
-                self.assertEqual(image.read_bytes(), self.PNG)
-                self.assertIn(str(image), prompt)
-                self.assertIn("Explain this screenshot", prompt)
-                self.assertNotIn("../../private.png", prompt)
-                self.assertNotEqual(threading.get_ident(), main_thread)
-                calls.append((command, operation, pane_id, kwargs))
-                return subprocess.CompletedProcess([], 0, stdout="accepted", stderr="")
-
-            with mock.patch.object(relay, "run_herdr_result", side_effect=fake_cli):
-                replies = self.dispatch(relay, self.request())
-            self.assertEqual(replies, [{"type": "command_result", "command": "send_attachment",
-                                      "request_id": "image-123", "ok": True}])
-            self.assertEqual(calls, [("agent", "prompt", "w1:p1", {"remote": None, "session": "lab"})])
-
-    def test_unknown_ambiguous_and_ssh_panes_reject_before_saving(self):
-        for pane_id, remote in (("missing", None), ("w1:p1", None), ("lab:w1:p1", "remote-host")):
-            with self.subTest(pane_id=pane_id, remote=remote), loaded_relay() as relay:
-                self.configure_target(relay)
-                relay.pane_remote_map["lab:w1:p1"] = remote
-                with mock.patch.object(relay, "run_herdr_result") as run:
-                    replies = self.dispatch(relay, self.request(pane_id=pane_id))
-                self.assertEqual(len(replies), 1)
-                self.assertEqual(replies[0]["type"], "error")
-                self.assertEqual(replies[0]["request_id"], "image-123")
-                self.assertIn("SSH" if remote else "unknown", replies[0]["message"])
-                self.assertFalse((Path(os.environ["HERDR_RELAY_DATA_DIR"]) / "attachments").exists())
-                run.assert_not_called()
-
-    def test_failed_cli_or_exception_removes_image_without_success_or_sensitive_error(self):
-        for outcome in (subprocess.CompletedProcess([], 1, stdout="", stderr="private output"),
-                        RuntimeError("private image bytes")):
-            with self.subTest(outcome=type(outcome).__name__), loaded_relay() as relay:
-                self.configure_target(relay)
-                settings = {"side_effect": outcome} if isinstance(outcome, Exception) else {"return_value": outcome}
-                with mock.patch.object(relay, "run_herdr_result", **settings):
-                    replies = self.dispatch(relay, self.request())
-                self.assertEqual(replies, [{"type": "error", "request_id": "image-123",
-                                          "message": "Image prompt submission failed"}])
-                self.assertEqual(list((Path(os.environ["HERDR_RELAY_DATA_DIR"]) / "attachments").iterdir()), [])
-
-    def test_invalid_fields_are_correlated_errors_and_do_not_invoke_cli(self):
-        changes = ({"text": "x" * 1001}, {"text": []}, {"attachment": None},
-                   {"pane_id": []}, {"request_id": ""}, {"request_id": ["invalid"]},
-                   {"attachment": {"name": "x.png", "mime": "image/png", "data": "%%%"}})
-        for change in changes:
-            with self.subTest(change=list(change)), loaded_relay() as relay:
-                self.configure_target(relay)
-                with mock.patch.object(relay, "run_herdr_result") as run:
-                    replies = self.dispatch(relay, self.request(**change))
-                self.assertEqual(len(replies), 1)
-                self.assertEqual(replies[0]["type"], "error")
-                self.assertIn("request_id", replies[0])
-                run.assert_not_called()
-
-    def test_unauthenticated_upload_cannot_store_or_submit_an_image(self):
-        with loaded_relay(relay_token="synthetic-auth") as relay:
-            self.configure_target(relay)
-            ws = _FakeWebSocket([json.dumps(self.request())])
-            with mock.patch.object(relay, "run_herdr_result") as run:
-                asyncio.run(relay.handle_client(ws))
-            self.assertEqual(ws.closed, (1008, "Unauthorized"))
-            self.assertEqual(ws.sent, [])
-            self.assertFalse((Path(os.environ["HERDR_RELAY_DATA_DIR"]) / "attachments").exists())
-            run.assert_not_called()
-
-    def test_authenticated_upload_acknowledges_without_logging_image_or_prompt(self):
-        with loaded_relay(relay_token="synthetic-auth") as relay:
-            self.configure_target(relay)
-            message = self.request(text="private-synthetic-prompt")
-            ws = _FakeWebSocket([
-                json.dumps({"type": "auth", "protocol": 1, "token": "synthetic-auth"}),
-                json.dumps(message),
-            ], headers={"X-Herdr-Remote-Command": "1"})
-            with mock.patch.object(relay, "run_herdr_result", return_value=subprocess.CompletedProcess([], 0)):
-                asyncio.run(relay.handle_client(ws))
-            self.assertEqual([json.loads(reply)["type"] for reply in ws.sent], ["auth_result", "command_result"])
-            for logfile in (relay.LOG_FILE, relay.AUDIT_FILE):
-                logged = Path(logfile).read_text()
-                self.assertNotIn(message["attachment"]["data"], logged)
-                self.assertNotIn(message["text"], logged)
-                self.assertNotIn(message["attachment"]["name"], logged)
-
-    def test_quota_failure_is_correlated_and_saved_images_have_no_http_route(self):
-        with loaded_relay() as relay:
-            self.configure_target(relay)
-            relay.attachment_store.max_files = 1
-            with mock.patch.object(relay, "run_herdr_result", return_value=subprocess.CompletedProcess([], 0)) as run:
-                first = self.dispatch(relay, self.request())
-                second = self.dispatch(relay, self.request(request_id="second-image"))
-            self.assertTrue(first[0]["ok"])
-            self.assertEqual(second[0]["type"], "error")
-            self.assertEqual(second[0]["request_id"], "second-image")
-            self.assertIn("storage is full", second[0]["message"])
-            self.assertEqual(run.call_count, 1)
-            files = list((Path(os.environ["HERDR_RELAY_DATA_DIR"]) / "attachments").iterdir())
-            self.assertEqual(len(files), 1)
-            for url in (f"/attachments/{files[0].name}", str(files[0])):
-                request = types.SimpleNamespace(path=url, headers=_Headers({}))
-                self.assertEqual(asyncio.run(relay.process_request(None, request)).status_code, 404)
-
-
 class RelayCommandTests(unittest.TestCase):
     def test_command_connection_skips_snapshot_and_correlates_ack(self):
         with loaded_relay() as relay:
@@ -1507,13 +1372,113 @@ class RelaySessionRoutingTests(unittest.TestCase):
         with loaded_relay() as relay:
             self._register_sessions(relay)
 
-            stub, _, _ = self._dispatch(relay, {
-                "type": "agent_prompt", "pane_id": "mxdb:w1:p1", "text": "go",
+            _, result_run, ws = self._dispatch(relay, {
+                "type": "agent_prompt", "request_id": "prompt-1",
+                "pane_id": "mxdb:w1:p1", "text": "go",
             })
 
-            prompt = stub.calls_for("agent", "prompt")[-1]
-            self.assertEqual(prompt["session"], "mxdb")
-            self.assertEqual(prompt["args"], ("agent", "prompt", "w1:p1", "go"))
+            result_run.assert_called_once_with(
+                "agent", "prompt", "w1:p1", "go", remote=None, session="mxdb"
+            )
+            self.assertEqual(json.loads(ws.sent[-1]), {
+                "type": "command_result", "command": "agent_prompt",
+                "request_id": "prompt-1", "ok": True,
+            })
+
+    def test_a_busy_agent_is_confirmed_before_the_client_gives_up(self):
+        """A working agent holds `herdr agent prompt` open; the prompt still arrived.
+
+        Waiting for the command to return made delivered prompts look failed on
+        a phone, so acceptance is confirmed once the grace window passes. The
+        order of events is what matters: the confirmation must leave before the
+        command finishes, however long the agent takes.
+        """
+        with loaded_relay() as relay:
+            self._register_sessions(relay)
+            relay.PROMPT_ACK_GRACE = 0.05
+            order = []
+
+            def busy_agent(*args, **kwargs):
+                time.sleep(0.4)
+                order.append("command-returned")
+                return subprocess.CompletedProcess([], 0, stdout="", stderr="")
+
+            stub = _HerdrStub(THREE_SESSIONS, PANES_BY_SESSION)
+            ws = _FakeWebSocket([json.dumps({
+                "type": "agent_prompt", "request_id": "prompt-busy",
+                "pane_id": "mxdb:w1:p1", "text": "go",
+            })])
+            plain_send = ws.send
+
+            async def watched_send(payload):
+                if json.loads(payload).get("request_id") == "prompt-busy":
+                    order.append("confirmation-sent")
+                await plain_send(payload)
+
+            ws.send = watched_send
+            with mock.patch.object(relay, "send_current_snapshot", new=mock.AsyncMock()), \
+                 mock.patch.object(relay, "run_herdr", stub), \
+                 mock.patch.object(relay, "run_herdr_result", side_effect=busy_agent):
+                asyncio.run(relay.handle_client(ws))
+
+            self.assertEqual(json.loads(ws.sent[-1]), {
+                "type": "command_result", "command": "agent_prompt",
+                "request_id": "prompt-busy", "ok": True,
+            })
+            self.assertEqual(order, ["confirmation-sent", "command-returned"])
+
+    def test_a_late_prompt_failure_is_reported_with_its_request_id(self):
+        """Confirming on acceptance means a failure has to travel on its own."""
+        with loaded_relay() as relay:
+            ws = _FakeWebSocket([])
+
+            async def scenario():
+                task = asyncio.create_task(asyncio.sleep(
+                    0, subprocess.CompletedProcess([], 1, stdout="private", stderr="private")
+                ))
+                await relay.report_late_prompt_failure(ws, task, "mxdb:w1:p1", "prompt-late")
+
+            asyncio.run(scenario())
+
+            self.assertEqual(json.loads(ws.sent[-1]), {
+                "type": "error", "request_id": "prompt-late",
+                "message": "Agent prompt submission failed",
+            })
+
+    def test_agent_prompt_failure_is_correlated_and_keeps_private_cli_output_private(self):
+        with loaded_relay() as relay:
+            self._register_sessions(relay)
+            failed = subprocess.CompletedProcess([], 1, stdout="private", stderr="private")
+
+            _, _, ws = self._dispatch(relay, {
+                "type": "agent_prompt", "request_id": "prompt-2",
+                "pane_id": "mxdb:w1:p1", "text": "go",
+            }, run_result=failed)
+
+            response = json.loads(ws.sent[-1])
+            self.assertEqual(response, {
+                "type": "error", "request_id": "prompt-2",
+                "message": "Agent prompt submission failed",
+            })
+            self.assertNotIn("private", json.dumps(response))
+
+    def test_agent_prompt_rejects_invalid_fields_without_invoking_the_cli(self):
+        invalid_messages = (
+            ({"pane_id": [], "text": "go"}, True),
+            ({"pane_id": "mxdb:w1:p1", "text": []}, True),
+            ({"pane_id": "mxdb:w1:p1", "text": "go", "request_id": []}, False),
+        )
+        for changes, correlated in invalid_messages:
+            with self.subTest(changes=changes), loaded_relay() as relay:
+                self._register_sessions(relay)
+                message = {"type": "agent_prompt", "request_id": "prompt-invalid", **changes}
+
+                _, result_run, ws = self._dispatch(relay, message)
+
+                result_run.assert_not_called()
+                response = json.loads(ws.sent[-1])
+                self.assertEqual(response["type"], "error")
+                self.assertEqual(response.get("request_id") == "prompt-invalid", correlated)
 
     def test_create_tab_is_addressed_to_the_owning_session(self):
         with loaded_relay() as relay:

@@ -5,7 +5,6 @@ Usage: uv run --with playwright python tests/check_terminal_layout.py
 """
 
 import asyncio
-import base64
 import json
 from pathlib import Path
 import tempfile
@@ -178,48 +177,35 @@ async def main():
               window.sentMessages = [];
               ws = {readyState: 1, send(raw) { window.sentMessages.push(JSON.parse(raw)); }};
             }""")
-            png = base64.b64decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=')
-            picker = page.locator('#attachmentInput')
-            await picker.set_input_files({'name': 'notes.txt', 'mimeType': 'text/plain', 'buffer': b'not an image'})
-            assert 'PNG, JPEG or WebP' in await page.locator('#composerStatus').inner_text()
-            assert not await page.locator('#attachmentPreview').is_visible()
-            await picker.set_input_files({'name': 'too-large.png', 'mimeType': 'image/png',
-                                          'buffer': b'x' * (5 * 1024 * 1024 + 1)})
-            assert 'up to 5 MiB' in await page.locator('#composerStatus').inner_text()
-            assert not await page.locator('#attachmentPreview').is_visible()
-            await picker.set_input_files({'name': 'screenshot.png', 'mimeType': 'image/png', 'buffer': png})
-            assert await page.locator('#attachmentPreview').is_visible()
-            await page.get_by_role('button', name='Remove image', exact=True).click()
-            assert not await page.locator('#attachmentPreview').is_visible()
-            await picker.set_input_files({'name': 'screenshot.png', 'mimeType': 'image/png', 'buffer': png})
-            await page.locator('#termInput').fill('Read this screenshot')
-            await check_layout(852, 190, 'image with keyboard space')
+            await page.locator('#termInput').fill('Run from mobile')
+            await check_layout(852, 190, 'text with keyboard space')
             await page.evaluate('ws = null')
             await page.evaluate("sendText()")
             assert 'Not connected' in await page.locator('#composerStatus').inner_text()
-            assert await page.locator('#attachmentPreview').is_visible()
+            assert await page.locator('#termInput').input_value() == 'Run from mobile'
+            assert not await page.get_by_role('button', name='Send', exact=True).is_disabled()
             await page.evaluate("""() => {
               ws = {readyState: 1, send(raw) { window.sentMessages.push(JSON.parse(raw)); }};
             }""")
             await page.get_by_role('button', name='Send', exact=True).click()
-            await page.wait_for_function("sentMessages.filter(m => m.type === 'send_attachment').length === 1")
-            requests = await page.evaluate("sentMessages.filter(m => m.type === 'send_attachment')")
+            await page.wait_for_function("sentMessages.filter(m => m.type === 'agent_prompt').length === 1")
+            requests = await page.evaluate("sentMessages.filter(m => m.type === 'agent_prompt')")
             assert len(requests) == 1, requests
             request = requests[0]
             assert request['pane_id'] == 'demo:workspace:p1'
-            assert request['text'] == 'Read this screenshot'
-            assert base64.b64decode(request['attachment']['data']) == png
+            assert request['text'] == 'Run from mobile'
+            assert request['request_id']
+            assert not await page.evaluate("sentMessages.some(m => m.type === 'send_text')")
             assert not await page.evaluate("sentMessages.some(m => m.type === 'send_keys')")
+            assert await page.locator('#termInput').input_value() == 'Run from mobile'
             assert await page.get_by_role('button', name='Send', exact=True).is_disabled()
             await page.evaluate("sendText()")
-            assert len(await page.evaluate("sentMessages.filter(m => m.type === 'send_attachment')")) == 1
+            assert len(await page.evaluate("sentMessages.filter(m => m.type === 'agent_prompt')")) == 1
             await page.evaluate("id => handleMessage({type:'error', request_id:id, message:'Synthetic delivery failure'})", request['request_id'])
-            assert await page.locator('#attachmentPreview').is_visible()
-            assert await page.locator('#termInput').input_value() == 'Read this screenshot'
+            assert await page.locator('#termInput').input_value() == 'Run from mobile'
             assert 'Synthetic delivery failure' in await page.locator('#composerStatus').inner_text()
-            await check_layout(852, 190, 'image error with keyboard space')
-            await page.screenshot(path=str(screenshots / 'image-error-keyboard.png'))
-            assert await page.locator('#attachmentPreview').is_visible()
+            await check_layout(852, 190, 'text error with keyboard space')
+            await page.screenshot(path=str(screenshots / 'text-error-keyboard.png'))
             assert not await page.get_by_role('button', name='Send', exact=True).is_disabled()
             # The dashboard's real connection controller may update the global
             # socket while this long synthetic test changes the viewport.
@@ -228,8 +214,8 @@ async def main():
               ws = {readyState: 1, send(raw) { window.sentMessages.push(JSON.parse(raw)); }};
             }""")
             await page.get_by_role('button', name='Send', exact=True).click()
-            await page.wait_for_function("sentMessages.filter(m => m.type === 'send_attachment').length === 2")
-            retries = await page.evaluate("sentMessages.filter(m => m.type === 'send_attachment')")
+            await page.wait_for_function("sentMessages.filter(m => m.type === 'agent_prompt').length === 2")
+            retries = await page.evaluate("sentMessages.filter(m => m.type === 'agent_prompt')")
             retry_state = {
                 'requests': retries,
                 'status': await page.locator('#composerStatus').inner_text(),
@@ -241,13 +227,11 @@ async def main():
             # A result for another pane must not clear the current draft.
             await page.evaluate("openTerminal('demo:workspace:p2')")
             assert await page.get_by_role('button', name='Hide terminal controls', exact=True).is_visible()
-            assert not await page.locator('#attachmentPreview').is_visible()
             await page.locator('#termInput').fill('Other pane draft')
-            handled = await page.evaluate("id => TerminalAttachments.handleMessage({type:'command_result', command:'send_attachment', request_id:id, ok:true})", latest['request_id'])
+            handled = await page.evaluate("id => TerminalComposer.handleMessage({type:'command_result', command:'agent_prompt', request_id:id, ok:true})", latest['request_id'])
             assert handled, latest
             assert await page.locator('#termInput').input_value() == 'Other pane draft'
             await page.evaluate("openTerminal('demo:workspace:p1')")
-            assert not await page.locator('#attachmentPreview').is_visible()
             assert await page.locator('#termInput').input_value() == ''
             assert not errors, errors
             print(f"Screenshots: {screenshots}", flush=True)

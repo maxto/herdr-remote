@@ -90,7 +90,7 @@ assert_eq "$?" "0" "terminal viewport"
 echo "10d. mobile browser layout"
 if [ "${HERDR_BROWSER_TESTS:-0}" = "1" ]; then
   uv run --with playwright python "$DIR/tests/check_terminal_layout.py"
-  assert_eq "$?" "0" "mobile layout and image composer"
+  assert_eq "$?" "0" "mobile layout and text composer"
 else
   PASS=$((PASS+1)); echo "  skip: set HERDR_BROWSER_TESTS=1 to run Playwright"
 fi
