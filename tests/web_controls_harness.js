@@ -5,9 +5,8 @@ const vm = require('node:vm');
 
 const markup = fs.readFileSync(path.join(__dirname, '../web/index.html'), 'utf8');
 
-function setup({ supported = true, reject = false, viewport = true } = {}) {
+function setup({ viewport = true } = {}) {
   const elements = new Map();
-  const calls = [];
   const document = new EventTarget();
   const window = new EventTarget();
   window.innerWidth = 393;
@@ -45,6 +44,7 @@ function setup({ supported = true, reject = false, viewport = true } = {}) {
     node.clientHeight = 700;
     node.scrollTop = 300;
     node.blur = () => { document.activeElement = document.body; };
+    node.focus = () => { document.activeElement = node; };
     node.replaceChildren = () => {};
     return node;
   }
@@ -54,8 +54,6 @@ function setup({ supported = true, reject = false, viewport = true } = {}) {
   document.documentElement.clientWidth = 393;
   document.documentElement.clientHeight = 852;
   document.activeElement = document.body;
-  document.fullscreenEnabled = supported;
-  document.fullscreenElement = null;
   document.getElementById = id => {
     if (!elements.has(id)) {
       const tag = markup.match(new RegExp(`<[^>]+\\bid="${id}"[^>]*>`));
@@ -66,32 +64,14 @@ function setup({ supported = true, reject = false, viewport = true } = {}) {
     }
     return elements.get(id);
   };
-  document.documentElement.requestFullscreen = function(options) {
-    calls.push({ action: 'enter', navigationUI: options.navigationUI });
-    if (reject) return Promise.reject(new Error('browser refused'));
-    document.fullscreenElement = this;
-    document.dispatchEvent(new Event('fullscreenchange'));
-    return Promise.resolve();
-  };
-  document.exitFullscreen = () => {
-    calls.push({ action: 'exit' });
-    if (reject) return Promise.reject(new Error('browser refused'));
-    document.fullscreenElement = null;
-    document.dispatchEvent(new Event('fullscreenchange'));
-    return Promise.resolve();
-  };
   const context = vm.createContext({ document, window });
   function runScript(id) {
     const script = markup.match(new RegExp(`<script id="${id}">([\\s\\S]*?)<\\/script>`));
     assert.ok(script, `the dashboard must load ${id}`);
     vm.runInContext(script[1], context);
   }
-  runScript('fullscreenControls');
   return {
-    document, window, calls, context, runScript,
-    button: document.getElementById('fullscreenButton'),
-    icon: document.getElementById('fullscreenIcon'),
-    status: document.getElementById('fullscreenStatus'),
+    document, window, context, runScript,
   };
 }
 

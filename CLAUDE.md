@@ -84,9 +84,9 @@ A token-protected relay authenticates first: the client sends `auth`
 unauthenticated socket is closed with `1008` and receives no agent data. A
 browser origin outside the allowlist is refused with `403` before the upgrade.
 
-**Server → Client:** `agents` (complete state snapshot), `agent_update` (single-pane state merge), `blocked` (approval prompt), `pane_content` (terminal read), `history` (one pane's conversation), `timeline` (status log)
+**Server → Client:** `agents` (complete state snapshot), `agent_update` (single-pane state merge), `blocked` (approval prompt), `pane_content` (terminal read), `timeline` (status log), `command_result` / `error` (request result)
 
-**Client → Server:** `respond` (send text to agent), `read_pane` (request terminal content), `send_keys` (send key sequences), `send_text` (raw text without newline), `get_history` (one pane's conversation), `get_timeline` (status log), `push_subscribe` (register for web push)
+**Client → Server:** `respond` (send text to agent), `read_pane` (request terminal content), `send_keys` (send key sequences), `send_text` (raw text without newline), `send_attachment` (image plus optional prompt), `get_timeline` (status log), `push_subscribe` (register for web push)
 
 ## Deployment
 

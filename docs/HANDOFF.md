@@ -32,14 +32,13 @@ adds their HTTP routes; later edits to the assets are read on request. See
 the Android installation steps in `docs/TAILSCALE.md`.
 
 Selecting a terminal opens a dedicated responsive view. `TerminalViewport` in
-`web/index.html` follows the visual viewport (including keyboard changes), while
-`FullscreenControls` owns the browser API and both fullscreen buttons. Refreshes
-triggered by agent messages use `openTerminal(activePane, false)` so they cannot
-force fullscreen after the user exits. Output wraps unless **Keep columns** is
+`web/index.html` follows the visual viewport, including keyboard changes, without
+requesting the browser fullscreen API. Output wraps unless **Keep columns** is
 enabled; no remote pane resize is sent. The same controller hides terminal chrome
-on entry and owns the floating **Show/Hide terminal controls** button. Hiding
-controls closes panels and blurs the input without clearing its draft. Automatic
-refreshes preserve the current controls state.
+on entry and owns the floating eye button for showing or hiding terminal controls.
+Hiding controls closes panels and blurs the input without clearing its draft.
+Pane output refreshes automatically every three seconds and after input; there is
+no separate manual refresh button. Incoming updates preserve the controls state.
 
 `TerminalInput` makes **ABC**, **Keys**, **123** and **Commands** mutually
 exclusive. It measures the last native-keyboard height when Chromium exposes it,
@@ -131,7 +130,7 @@ it is configuration-driven — but the credentials and its service are gone.
   `HERDR_BROWSER_TESTS=1 sh tests/run.sh`, after
   installing its Chromium with
   `uv run --with playwright python -m playwright install chromium --only-shell`.
-  They exercise phone/tablet sizes, fullscreen, wrapping and constrained keyboard
+  They exercise phone/tablet sizes, wrapping and constrained keyboard
   space. Actual Android keyboard and system-bar behaviour still needs a device.
 - Never write credentials, tokens, personal hostnames or absolute home paths
   into this repository.

@@ -1444,24 +1444,6 @@ async def handle_client(ws):
                     "type": "timeline",
                     "entries": timeline_entries,
                 }))
-            elif msg_type == "get_history":
-                target = resolve_pane(msg["pane_id"])
-                if target is None:
-                    await ws.send(json.dumps({"type": "error", "message": "unknown pane_id"}))
-                    continue
-                pane_id = msg["pane_id"]
-                # Try to read conversation history from agent's session log
-                history = run_herdr(
-                    "agent", "history", target.herdr_pane_id, "--format", "json",
-                    **target.kwargs
-                )
-                messages = []
-                try:
-                    data = json.loads(history) if history else {}
-                    messages = data.get("messages", data.get("history", []))
-                except Exception:
-                    pass
-                await ws.send(json.dumps({"type": "history", "pane_id": pane_id, "messages": messages}))
             elif msg_type == "send_keys":
                 target = resolve_pane(msg["pane_id"])
                 request_id = msg.get("request_id")

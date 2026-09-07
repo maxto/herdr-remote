@@ -38,6 +38,25 @@ class WebAssetsTest(unittest.TestCase):
         )
 
 
+class TerminalControlSurfaceTest(unittest.TestCase):
+    def setUp(self):
+        self.markup = (Path(__file__).parent.parent / "web" / "index.html").read_text()
+
+    def test_obsolete_terminal_controls_are_absent(self):
+        for control in (
+            'id="fullscreenButton"',
+            'id="terminalFullscreenButton"',
+            'class="refresh-btn"',
+            'class="history-btn"',
+            'id="termHistory"',
+        ):
+            self.assertNotIn(control, self.markup, control)
+
+    def test_browser_fullscreen_api_is_not_used(self):
+        self.assertNotIn("requestFullscreen", self.markup)
+        self.assertNotIn("exitFullscreen", self.markup)
+
+
 class CredentialFieldCollector(HTMLParser):
     """Collects the relay credential inputs and whether a form encloses them."""
 

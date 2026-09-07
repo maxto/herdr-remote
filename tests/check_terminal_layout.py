@@ -51,7 +51,7 @@ async def main():
 
             async def check_reading_view():
                 for selector in ['#termHeader', '.term-input', '#termKeys', '#quickDock',
-                                 '#quickActions', '#termSearch', '#termHistory']:
+                                 '#quickActions', '#termSearch']:
                     assert not await page.locator(selector).is_visible(), selector
                 output = await page.locator('#termContent').bounding_box()
                 view = await page.locator('#terminalView').bounding_box()
@@ -77,13 +77,7 @@ async def main():
             screenshots = Path(tempfile.mkdtemp(prefix="herdr-terminal-layout-"))
 
             async def check_layout(width, height, label):
-                # Chromium's desktop host window cannot be resized while fullscreen.
-                # Set the emulated orientation, then re-enter through the actual button.
-                if await page.evaluate("Boolean(document.fullscreenElement)"):
-                    await page.evaluate("document.exitFullscreen()")
                 await page.set_viewport_size({"width": width, "height": height})
-                await page.locator('#terminalFullscreenButton').click()
-                await page.wait_for_function("Boolean(document.fullscreenElement)")
                 await page.wait_for_function(
                     """([w, h]) => {
                       const rect = document.getElementById('terminalView').getBoundingClientRect();
@@ -142,7 +136,7 @@ async def main():
             await page.evaluate("""() => {
               agents[0].status = 'blocked';
               agents[0].options = Array.from({length: 12}, (_, i) => `Option ${i + 1}`);
-              openTerminal('demo:workspace:p1', false);
+              openTerminal('demo:workspace:p1');
             }""")
             await page.get_by_role('button', name='Keys', exact=True).click()
             await check_layout(852, 190, "keyboard plus action keys")
@@ -162,12 +156,12 @@ async def main():
             await page.get_by_role('button', name='Hide terminal controls', exact=True).click()
             await check_reading_view()
             assert not await page.evaluate("document.activeElement.id === 'termInput'")
-            await page.evaluate("openTerminal('demo:workspace:p1', false)")
+            await page.evaluate("openTerminal('demo:workspace:p1')")
             await check_reading_view()
             await page.get_by_role('button', name='Show terminal controls', exact=True).click()
             assert await page.locator('#termInput').input_value() == 'draft command'
             assert not await page.locator('#termKeys').is_visible()
-            await page.evaluate("openTerminal('demo:workspace:p1', false)")
+            await page.evaluate("openTerminal('demo:workspace:p1')")
             assert await page.locator('#termInput').is_visible()
             await page.get_by_role('button', name='Commands', exact=True).click()
             await page.get_by_role('button', name='Agent commands', exact=True).click()
@@ -176,7 +170,6 @@ async def main():
             await page.locator('#cmdPalette button').click()
             await page.get_by_role("button", name="Back to agent list", exact=True).click()
             assert not await page.evaluate("document.body.classList.contains('terminal-open')")
-            await page.wait_for_function("!document.fullscreenElement")
             await page.locator('[data-pane-id="demo:workspace:p1"]').click()
             await check_reading_view()
             await page.get_by_role('button', name='Show terminal controls', exact=True).click()
@@ -229,7 +222,7 @@ async def main():
             assert await page.locator('#attachmentPreview').is_visible()
             assert not await page.get_by_role('button', name='Send', exact=True).is_disabled()
             # The dashboard's real connection controller may update the global
-            # socket while this long synthetic test changes viewport/fullscreen.
+            # socket while this long synthetic test changes the viewport.
             # Reinstall the recording socket before exercising the retry.
             await page.evaluate("""() => {
               ws = {readyState: 1, send(raw) { window.sentMessages.push(JSON.parse(raw)); }};
@@ -247,13 +240,13 @@ async def main():
             latest = retries[-1]
             # A result for another pane must not clear the current draft.
             await page.evaluate("openTerminal('demo:workspace:p2')")
-            await page.get_by_role('button', name='Show terminal controls', exact=True).click()
+            assert await page.get_by_role('button', name='Hide terminal controls', exact=True).is_visible()
             assert not await page.locator('#attachmentPreview').is_visible()
             await page.locator('#termInput').fill('Other pane draft')
             handled = await page.evaluate("id => TerminalAttachments.handleMessage({type:'command_result', command:'send_attachment', request_id:id, ok:true})", latest['request_id'])
             assert handled, latest
             assert await page.locator('#termInput').input_value() == 'Other pane draft'
-            await page.evaluate("openTerminal('demo:workspace:p1', false)")
+            await page.evaluate("openTerminal('demo:workspace:p1')")
             assert not await page.locator('#attachmentPreview').is_visible()
             assert await page.locator('#termInput').input_value() == ''
             assert not errors, errors

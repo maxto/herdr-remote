@@ -53,7 +53,6 @@ body.terminal-open > .header { display: none; }
 .header button:hover { color: var(--text); background: var(--border); }
 .header button[hidden] { display: none; }
 .header button[aria-pressed="true"] { color: var(--blue); }
-.fullscreen-status { position: fixed; top: 80px; left: 16px; right: 16px; z-index: 200; padding: 12px; border: 1px solid var(--red); border-radius: 8px; background: var(--bg); color: var(--red); pointer-events: none; }
 .dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
 .dot.pulse { animation: pulse 2s infinite; }
 @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.4; } }
@@ -105,7 +104,7 @@ body.terminal-open > .header { display: none; }
 .terminal-view { display: none; flex-direction: column; position: fixed; top: var(--terminal-top, 0px); left: var(--terminal-left, 0px); width: var(--terminal-width, 100%); height: var(--terminal-height, 100dvh); padding: 0 env(safe-area-inset-right, 0px) env(safe-area-inset-bottom, 0px) env(safe-area-inset-left, 0px); overflow: hidden; background: var(--bg); z-index: 50; }
 .terminal-view.active { display: flex; }
 .term-header { padding: calc(4px + env(safe-area-inset-top, 0px)) 48px 4px 4px; border-bottom: 1px solid var(--border); display: flex; align-items: center; gap: 4px; flex-shrink: 0; }
-.terminal-view.controls-hidden > :is(.term-header, .term-search, .term-history, .term-input, .term-keys, .quick-actions, .input-modes, .attachment-preview, .composer-status) { display: none !important; }
+.terminal-view.controls-hidden > :is(.term-header, .term-search, .term-input, .term-keys, .quick-actions, .input-modes, .attachment-preview, .composer-status) { display: none !important; }
 .terminal-controls-toggle { position: absolute; top: calc(4px + env(safe-area-inset-top, 0px)); right: calc(4px + env(safe-area-inset-right, 0px)); width: 40px; height: 40px; display: flex; align-items: center; justify-content: center; border: 1px solid var(--border); border-radius: 8px; background: var(--surface); color: var(--text); cursor: pointer; z-index: 20; }
 .terminal-controls-toggle:focus-visible { outline: 2px solid var(--blue); outline-offset: 2px; }
 .terminal-view.compact:not(.controls-hidden) .terminal-controls-toggle { top: env(safe-area-inset-top, 0px); }
@@ -114,12 +113,6 @@ body.terminal-open > .header { display: none; }
 .term-header button:hover { color: var(--text); background: var(--border); }
 .term-header .back, .term-header button[aria-pressed="true"] { color: var(--blue); }
 .term-header .title { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; font-size: 0.8rem; font-weight: 500; }
-.term-history { position: absolute; top: var(--term-header-height, 49px); left: env(safe-area-inset-left, 0px); right: env(safe-area-inset-right, 0px); bottom: env(safe-area-inset-bottom, 0px); background: var(--surface); display: flex; flex-direction: column; min-height: 0; z-index: 10; }
-.term-history .msg { padding: 8px 0; border-bottom: 1px solid var(--border); }
-.term-history .msg-role { font-size: 0.7rem; font-weight: 600; color: var(--muted); text-transform: uppercase; margin-bottom: 4px; }
-.term-history .msg-user { color: var(--blue); }
-.term-history .msg-assistant { color: var(--green); }
-.term-history .msg-text { white-space: pre-wrap; word-break: break-word; }
 .term-search { display: flex; align-items: center; gap: 6px; padding: 8px 12px; background: var(--surface); border-bottom: 1px solid var(--border); }
 .term-search input { flex: 1; min-width: 0; padding: 6px 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 16px; }
 .term-search input:focus { outline: none; border-color: var(--blue); }
@@ -216,12 +209,9 @@ body.terminal-open #cmdPalette > div:last-child { max-height: 90%; }
   <h1><button type="button" onclick="goHome()" aria-label="Back to agents" class="home-link">herdr</button></h1>
   <span id="connLabel" style="font-size:0.65rem;font-weight:500"></span>
   <span id="agentCount" style="font-size:0.7rem;color:var(--muted);margin-left:auto"></span>
-  <button id="fullscreenButton" type="button" aria-label="Full screen" aria-pressed="false" title="Enter full screen" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path id="fullscreenIcon" d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg></button>
   <button onclick="toggleTimeline()" aria-label="Timeline"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></button>
   <button onclick="toggleSettings()" aria-label="Settings"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12.22 2h-.44a2 2 0 0 0-2 2v.18a2 2 0 0 1-1 1.73l-.43.25a2 2 0 0 1-2 0l-.15-.08a2 2 0 0 0-2.73.73l-.22.38a2 2 0 0 0 .73 2.73l.15.1a2 2 0 0 1 1 1.72v.51a2 2 0 0 1-1 1.74l-.15.09a2 2 0 0 0-.73 2.73l.22.38a2 2 0 0 0 2.73.73l.15-.08a2 2 0 0 1 2 0l.43.25a2 2 0 0 1 1 1.73V20a2 2 0 0 0 2 2h.44a2 2 0 0 0 2-2v-.18a2 2 0 0 1 1-1.73l.43-.25a2 2 0 0 1 2 0l.15.08a2 2 0 0 0 2.73-.73l.22-.39a2 2 0 0 0-.73-2.73l-.15-.08a2 2 0 0 1-1-1.74v-.5a2 2 0 0 1 1-1.74l.15-.09a2 2 0 0 0 .73-2.73l-.22-.38a2 2 0 0 0-2.73-.73l-.15.08a2 2 0 0 1-2 0l-.43-.25a2 2 0 0 1-1-1.73V4a2 2 0 0 0-2-2z"/><circle cx="12" cy="12" r="3"/></svg></button>
 </div>
-
-<p id="fullscreenStatus" class="fullscreen-status" role="status" hidden></p>
 
 <div class="settings" id="settingsView">
   <h2>Settings</h2>
@@ -257,22 +247,12 @@ body.terminal-open #cmdPalette > div:last-child { max-height: 90%; }
 </div>
 
 <div class="terminal-view" id="terminalView">
-  <button id="terminalControlsToggle" class="terminal-controls-toggle" type="button" aria-label="Show terminal controls" aria-expanded="false" aria-controls="termHeader termInputBar termKeys quickDock quickActions termSearch termHistory" title="Show terminal controls"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 6h16M4 12h16M4 18h16"/></svg></button>
+  <button id="terminalControlsToggle" class="terminal-controls-toggle" type="button" aria-label="Show terminal controls" aria-expanded="false" aria-controls="termHeader termInputBar termKeys quickDock quickActions termSearch" title="Show terminal controls"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path id="terminalControlsIcon" d="M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Zm10-3a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z"/></svg></button>
   <div class="term-header" id="termHeader">
     <button class="back" onclick="closeTerminal()" aria-label="Back to agent list"><svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="m15 18-6-6 6-6"/></svg></button>
     <span class="title" id="termTitle"></span>
     <button id="keepColumnsButton" type="button" aria-label="Keep columns" aria-pressed="false" title="Keep original columns"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" aria-hidden="true"><path d="M4 4v16M20 4v16M8 7h8M8 12h8M8 17h8"/></svg></button>
-    <button id="terminalFullscreenButton" type="button" aria-label="Full screen" aria-pressed="false" title="Enter full screen" hidden><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path id="terminalFullscreenIcon" d="M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5"/></svg></button>
     <button class="search-btn" onclick="toggleSearch()" aria-label="Find in output"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="8"/><path d="m21 21-4.35-4.35"/></svg></button>
-    <button class="history-btn" onclick="toggleHistory()" aria-label="Conversation history"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 12a9 9 0 1 0 9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M12 7v5l4 2"/></svg></button>
-    <button class="refresh-btn" onclick="refreshPane()" aria-label="Refresh pane"><svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 0 0-9-9 9.75 9.75 0 0 0-6.74 2.74L3 8"/><path d="M3 3v5h5"/><path d="M3 12a9 9 0 0 0 9 9 9.75 9.75 0 0 0 6.74-2.74L21 16"/><path d="M16 16h5v5"/></svg></button>
-  </div>
-  <div class="term-history" id="termHistory" style="display:none">
-    <div style="padding:8px 12px;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:8px">
-      <span style="font-size:0.8rem;font-weight:600;flex:1">Conversation History</span>
-      <button onclick="toggleHistory()" style="background:none;border:none;color:var(--muted);cursor:pointer"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 6 6 18M6 6l12 12"/></svg></button>
-    </div>
-    <div id="historyContent" style="flex:1;overflow-y:auto;padding:12px;font-size:0.8rem;line-height:1.5"></div>
   </div>
   <div class="term-search" id="termSearch" style="display:none">
     <input id="searchInput" type="text" placeholder="Find in output..." autocomplete="off" oninput="doSearch()" />
@@ -375,61 +355,6 @@ body.terminal-open #cmdPalette > div:last-child { max-height: 90%; }
   </div>
 </div>
 
-<script id="fullscreenControls">
-const FullscreenControls = (() => {
-  const supported = document.fullscreenEnabled && typeof document.documentElement.requestFullscreen === 'function';
-  const controls = [
-    [document.getElementById('fullscreenButton'), document.getElementById('fullscreenIcon')],
-    [document.getElementById('terminalFullscreenButton'), document.getElementById('terminalFullscreenIcon')],
-  ];
-  const status = document.getElementById('fullscreenStatus');
-  let busy = false;
-  function updateButton() {
-    const active = Boolean(document.fullscreenElement);
-    for (const [button, icon] of controls) {
-      button.hidden = !supported;
-      button.disabled = busy;
-      button.setAttribute('aria-pressed', String(active));
-      button.title = active ? 'Exit full screen' : 'Enter full screen';
-      icon.setAttribute('d', active
-        ? 'M3 8h5V3m8 0v5h5M8 21v-5H3m18 0h-5v5'
-        : 'M8 3H3v5m13-5h5v5M3 16v5h5m13-5v5h-5');
-    }
-  }
-  document.addEventListener('fullscreenchange', () => {
-    status.hidden = true;
-    status.textContent = '';
-    updateButton();
-  });
-  async function setFullscreen(enter) {
-    if (!supported || busy) return false;
-    if (Boolean(document.fullscreenElement) === enter) return enter;
-    busy = true;
-    updateButton();
-    status.hidden = true;
-    status.textContent = '';
-    try {
-      if (enter) {
-        await document.documentElement.requestFullscreen({ navigationUI: 'hide' });
-      } else {
-        await document.exitFullscreen();
-      }
-    } catch {
-      status.textContent = 'Full screen could not be changed. Tap the button to try again.';
-      status.hidden = false;
-    } finally {
-      busy = false;
-      updateButton();
-    }
-    return Boolean(document.fullscreenElement);
-  }
-  for (const [button] of controls) {
-    button.addEventListener('click', () => setFullscreen(!document.fullscreenElement));
-  }
-  updateButton();
-  return { enter: () => setFullscreen(true), exit: () => setFullscreen(false) };
-})();
-</script>
 <script id="terminalViewport">
 const TerminalViewport = (() => {
   const view = document.getElementById('terminalView');
@@ -437,10 +362,11 @@ const TerminalViewport = (() => {
   const content = document.getElementById('termContent');
   const columns = document.getElementById('keepColumnsButton');
   const controlsToggle = document.getElementById('terminalControlsToggle');
+  const controlsIcon = document.getElementById('terminalControlsIcon');
   let opened = false;
 
   function hidePanels() {
-    for (const id of ['termHistory', 'termSearch', 'termKeys', 'quickDock', 'cmdPalette', 'contextMenu']) {
+    for (const id of ['termSearch', 'termKeys', 'quickDock', 'cmdPalette', 'contextMenu']) {
       document.getElementById(id).style.display = 'none';
     }
   }
@@ -456,6 +382,9 @@ const TerminalViewport = (() => {
     const label = visible ? 'Hide terminal controls' : 'Show terminal controls';
     controlsToggle.setAttribute('aria-label', label);
     controlsToggle.title = label;
+    controlsIcon.setAttribute('d', visible
+      ? 'M3 3l18 18M10.6 10.6a2 2 0 0 0 2.8 2.8M9.9 5.2A10.8 10.8 0 0 1 12 5c6.5 0 10 7 10 7a16 16 0 0 1-2.1 3.1M6.6 6.6C3.7 8.5 2 12 2 12s3.5 7 10 7c1.2 0 2.3-.2 3.3-.6'
+      : 'M2 12s3.5-7 10-7 10 7 10 7-3.5 7-10 7S2 12 2 12Zm10-3a3 3 0 1 0 0 6 3 3 0 0 0 0-6Z');
     resize();
   }
   controlsToggle.addEventListener('click', () => {
@@ -483,24 +412,18 @@ const TerminalViewport = (() => {
   window.addEventListener('resize', scheduleResize);
   window.visualViewport?.addEventListener('resize', scheduleResize);
   window.visualViewport?.addEventListener('scroll', scheduleResize);
-  document.addEventListener('fullscreenchange', scheduleResize);
   columns.addEventListener('click', () => {
     const keepColumns = content.classList.toggle('keep-columns');
     columns.setAttribute('aria-pressed', String(keepColumns));
   });
 
-  function open(immersive) {
-    const resetControls = !opened || immersive;
+  function open() {
+    const resetControls = !opened;
     opened = true;
     document.body.classList.add('terminal-open');
     if (resetControls) setControlsVisible(false);
     document.getElementById('contextMenu').style.display = 'none';
     resize();
-    if (immersive) {
-      FullscreenControls.enter().then(active => {
-        if (active && !opened) FullscreenControls.exit();
-      });
-    }
   }
   function close() {
     if (!opened) return;
@@ -509,7 +432,6 @@ const TerminalViewport = (() => {
     document.activeElement?.blur();
     document.body.classList.remove('terminal-open');
     hidePanels();
-    FullscreenControls.exit();
   }
   return { open, close };
 })();
@@ -1094,7 +1016,7 @@ function handleMessage(msg) {
       if (timeline.length > 100) timeline.pop();
     }
     render();
-    if (msg.pane_id===activePane) openTerminal(activePane, false);
+    if (msg.pane_id===activePane) openTerminal(activePane);
   } else if (msg.type === 'pane_content' && msg.pane_id === activePane) {
     const el = document.getElementById('termContent');
     const prevHeight = el.scrollHeight;
@@ -1111,8 +1033,6 @@ function handleMessage(msg) {
     // The relay kept the record while this page was closed, so its copy wins.
     timeline = msg.entries.slice().reverse();
     renderTimeline();
-  } else if (msg.type === 'history' && msg.pane_id === activePane) {
-    renderHistory(msg.messages || []);
   }
 }
 
@@ -1275,7 +1195,7 @@ function section(title, color, list) {
     list.map(a => agentCard(a)).join('');
 }
 
-function openTerminal(paneId, immersive = true) {
+function openTerminal(paneId) {
   if (typeof TerminalAttachments !== 'undefined') TerminalAttachments.open(paneId);
   if (activePane !== paneId) document.getElementById('termContent').textContent = 'Loading…';
   activePane = paneId; paneLines = 200; userScrolledUp = false;
@@ -1289,7 +1209,7 @@ function openTerminal(paneId, immersive = true) {
   document.getElementById('agentListView').style.display = 'none';
   if (refreshInterval) clearInterval(refreshInterval);
   document.getElementById('terminalView').classList.add('active');
-  TerminalViewport.open(immersive);
+  TerminalViewport.open();
   const qa = document.getElementById('quickActions');
   const ak = document.getElementById('actionKeys');
   qa.replaceChildren();
@@ -1380,7 +1300,6 @@ function toggleSearch() {
     TerminalInput.reset();
     document.getElementById('terminalView').classList.add('searching');
     bar.style.display = 'flex';
-    document.getElementById('termHistory').style.display = 'none'; // close history if open
     input.focus();
   } else {
     bar.style.display = 'none';
@@ -1388,43 +1307,6 @@ function toggleSearch() {
     input.value = '';
     clearSearch();
   }
-}
-
-function toggleHistory() {
-  const panel = document.getElementById('termHistory');
-  if (panel.style.display === 'none') {
-    panel.style.display = 'flex';
-    document.getElementById('termSearch').style.display = 'none'; // close search if open
-    loadHistory();
-  } else {
-    panel.style.display = 'none';
-  }
-}
-
-function loadHistory() {
-  if (!ws || !activePane) return;
-  document.getElementById('historyContent').innerHTML = '<div style="color:var(--muted)">Loading...</div>';
-  ws.send(JSON.stringify({ type: 'get_history', pane_id: activePane }));
-}
-
-function renderHistory(messages) {
-  const el = document.getElementById('historyContent');
-  if (!messages || !messages.length) {
-    el.innerHTML = '<div style="color:var(--muted)">No conversation history available.<br><br>History is read from the agent\'s session log when supported.</div>';
-    return;
-  }
-  el.innerHTML = messages.map(m => `
-    <div class="msg">
-      <div class="msg-role ${m.role === 'user' ? 'msg-user' : 'msg-assistant'}">${m.role}</div>
-      <div class="msg-text">${escapeHtml(m.content || '').slice(0, 2000)}${(m.content?.length || 0) > 2000 ? '...' : ''}</div>
-    </div>
-  `).join('');
-}
-
-function escapeHtml(text) {
-  const div = document.createElement('div');
-  div.textContent = text;
-  return div.innerHTML;
 }
 
 function doSearch() {

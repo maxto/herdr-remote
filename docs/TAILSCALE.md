@@ -76,13 +76,13 @@ Open your own dashboard's HTTPS address in Chrome, reload it, then choose
 the new icon: it opens in its own window without Chrome's address bar. Android's
 status and navigation bars may remain visible.
 
-Selecting an agent opens its terminal in a dedicated view, hides the dashboard
-header and requests fullscreen. Only terminal output and a small floating menu
-button are shown initially. Tap **Show terminal controls** to reveal the toolbar
-and command field; tap **Hide terminal controls** to return to output only.
-Hiding controls also closes search, history and key panels, dismisses the keyboard
-and preserves any command draft. Incoming updates keep your controls visible or
-hidden as you chose; opening a terminal from the list starts with them hidden.
+Selecting an agent opens its terminal in a dedicated view and hides the dashboard
+header without requesting browser fullscreen. Only terminal output and a small
+floating eye button are shown initially. Tap it to reveal the toolbar and command
+field; tap the crossed-out eye to return to output only. Hiding controls closes
+search and key panels, dismisses the keyboard and preserves any command draft.
+Incoming updates keep your controls visible or hidden as you chose; opening a
+terminal from the list starts with them hidden.
 
 The terminal uses the available screen width and height on phones and tablets
 in either orientation, including the area behind a display cutout. The output may
@@ -107,12 +107,11 @@ toolbar preserves original line layout for tables and structured output, with
 horizontal scrolling. Both modes preserve ANSI colours and leave the terminal
 on the host machine at its existing size.
 
-The back arrow returns to the agent list and leaves fullscreen. The terminal's
-fullscreen button can toggle the browser mode without closing the terminal;
-it updates if Android exits the mode. Fullscreen controls are shown only when
-supported. If the browser refuses fullscreen, the dedicated terminal still
-fills the available app window. System gestures and the keyboard can bring
-Android controls back into view.
+The terminal fills the available app window and refreshes its output automatically
+every three seconds and after input, so it has no manual refresh control. Scroll to
+the top to load older pane output, up to 5,000 lines. The back arrow returns to the
+agent list. System gestures and the keyboard can change the available viewport;
+the terminal follows those changes without entering browser fullscreen.
 
 An older home-screen shortcut may still open a Chrome tab. Install from the
 updated page and use the newly installed app; the old shortcut can then be

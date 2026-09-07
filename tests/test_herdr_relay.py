@@ -1515,18 +1515,6 @@ class RelaySessionRoutingTests(unittest.TestCase):
             self.assertEqual(prompt["session"], "mxdb")
             self.assertEqual(prompt["args"], ("agent", "prompt", "w1:p1", "go"))
 
-    def test_history_is_addressed_to_the_owning_session(self):
-        with loaded_relay() as relay:
-            self._register_sessions(relay)
-
-            stub, _, _ = self._dispatch(relay, {
-                "type": "get_history", "pane_id": "crm:w1:p1",
-            })
-
-            history = stub.calls_for("agent", "history")[-1]
-            self.assertEqual(history["session"], "crm")
-            self.assertEqual(history["args"][2], "w1:p1")
-
     def test_create_tab_is_addressed_to_the_owning_session(self):
         with loaded_relay() as relay:
             self._register_sessions(relay)
