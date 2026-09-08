@@ -88,6 +88,27 @@ browser origin outside the allowlist is refused with `403` before the upgrade.
 
 **Client → Server:** `respond` (answer a blocked agent), `agent_prompt` (submit text to an agent), `read_pane` (request terminal content), `send_keys` (send key sequences), `send_text` (raw text without newline), `get_timeline` (status log), `push_subscribe` (register for web push)
 
+### Attachments
+
+A file goes up in chunks rather than in one message, and the relay hands the
+agent a path — never the bytes. Images, PDFs and UTF-8 text are accepted, each
+with its own ceiling.
+
+| Message | What it carries |
+|---------|-----------------|
+| `attachment_begin` | `name`, `mime`, `size`, `pane_id` — the relay judges type, ceiling, quota and pane **before a byte arrives**, and answers with an `upload_id` |
+| `attachment_chunk` | `upload_id`, `index`, base64 `data` — indices are strictly sequential |
+| `attachment_commit` | `upload_id` and optional `text` — the relay verifies the total and the content, then prompts the agent |
+| `attachment_abort` | `upload_id` — releases the file, the slot and the budget |
+
+Each chunk's `command_result` is the flow control: browsers buffer rather than
+block on send, so the client waits for one before sending the next. That keeps
+every frame small, which is why `WS_MAX_SIZE` is 512 KiB rather than large
+enough to hold a whole file.
+
+An upload belongs to its connection. There is no resume: a dropped socket, an
+idle sender, or a restart abandons it and removes the temporary.
+
 ## Deployment
 
 - Web app: served by the relay itself at `/`; editing `web/` is the deploy
