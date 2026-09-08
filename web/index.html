@@ -1166,6 +1166,41 @@ function ansiFragment(input) {
   return fragment;
 }
 
+// A phone kills a backgrounded page, so every launch used to start from an
+// empty list with a status label on it. The last snapshot is kept here and put
+// straight back on the next open, so the app arrives with what it last knew and
+// reconciles a moment later instead of asking to be waited for.
+//
+// What an agent is asking never comes here. That is the sensitive half of a
+// snapshot and this writes to the handset's own disk; the list needs none of
+// it, and the first live snapshot brings it back within a poll.
+const SNAPSHOT_KEY = 'herdr_last_agents';
+const SNAPSHOT_MAX_AGE_MS = 24 * 60 * 60 * 1000;
+const PROMPT_FIELDS = ['prompt', 'options', 'multi_options', 'multi', 'interaction', 'prompt_id', 'selected_options'];
+
+function rememberSnapshot(list) {
+  try {
+    const withoutPrompts = list.map(agent => {
+      const copy = {...agent};
+      for (const field of PROMPT_FIELDS) delete copy[field];
+      return copy;
+    });
+    localStorage.setItem(SNAPSHOT_KEY, JSON.stringify({at: Date.now(), agents: withoutPrompts}));
+  } catch (e) {}
+}
+
+function restoreSnapshot() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SNAPSHOT_KEY) || 'null');
+    if (!saved || !Array.isArray(saved.agents)) return;
+    // Old enough and it describes a morning that is over. The relay is the
+    // authority either way; this only decides what fills the gap until it speaks.
+    if (!(Date.now() - saved.at < SNAPSHOT_MAX_AGE_MS)) return;
+    agents = saved.agents;
+    render();
+  } catch (e) {}
+}
+
 function handleMessage(msg) {
   if (TerminalUpload.handleMessage(msg)) return;
   if (TerminalComposer.handleMessage(msg)) return;
@@ -1195,6 +1230,7 @@ function handleMessage(msg) {
       };
     });
     render();
+    rememberSnapshot(agents);
     closeStaleNotifications(agents);
   }
   else if (msg.type === 'agent_update') {
@@ -2092,7 +2128,7 @@ initPush();
 // of a second later, throwing away the socket this one had just opened, and a
 // launch that connects, drops and reconnects is what showed "connecting" on
 // every single open.
-if (savedUrl) connect();
+if (savedUrl) { restoreSnapshot(); connect(); }
 </script>
 </body>
 </html>

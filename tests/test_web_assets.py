@@ -393,3 +393,38 @@ class SubscriptionRegistrationTest(unittest.TestCase):
         # relay's VAPID keys cannot sign for.
         self.assertIn("applicationServerKey", handler)
         self.assertIn("oldSubscription", handler)
+
+
+class LastSnapshotTest(unittest.TestCase):
+    """Opening the app should not mean watching it connect to a blank list.
+
+    A phone kills a backgrounded page, so every launch started from nothing and
+    the first thing on screen was a status label. Keeping the last snapshot
+    means the app opens with what it last knew and corrects itself a moment
+    later, which is the difference between an app and a loading screen.
+    """
+
+    def setUp(self):
+        self.source = (Path(__file__).parent.parent / "web" / "index.html").read_text()
+
+    def body_of(self, name):
+        body = self.source[self.source.index(f"function {name}("):]
+        return body[:body.index("\nfunction ")]
+
+    def test_the_last_snapshot_is_kept_and_put_back(self):
+        self.assertIn("localStorage.setItem", self.body_of("rememberSnapshot"))
+        restore = self.body_of("restoreSnapshot")
+        self.assertIn("localStorage.getItem", restore)
+        self.assertIn("render()", restore)
+
+    def test_what_an_agent_is_asking_never_reaches_the_handset(self):
+        """The list view needs none of it, and the live snapshot brings it back."""
+        fields = self.source[self.source.index("const PROMPT_FIELDS"):]
+        fields = fields[:fields.index("\n")]
+
+        for secret in ("'prompt'", "'options'", "'selected_options'"):
+            self.assertIn(secret, fields, secret)
+        self.assertIn("PROMPT_FIELDS", self.body_of("rememberSnapshot"))
+
+    def test_a_snapshot_too_old_to_trust_is_not_put_back(self):
+        self.assertIn("SNAPSHOT_MAX_AGE_MS", self.body_of("restoreSnapshot"))
