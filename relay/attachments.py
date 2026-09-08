@@ -83,7 +83,12 @@ def verify_content(data, mime):
             and data.endswith(b"\x00\x00\x00\x00IEND\xaeB`\x82")
             and int.from_bytes(data[16:20], "big") > 0 and int.from_bytes(data[20:24], "big") > 0
         ),
-        "image/jpeg": len(data) >= 4 and data.startswith(b"\xff\xd8\xff") and data.endswith(b"\xff\xd9"),
+        # Cameras and screenshot tools append thumbnails, EXIF blocks and
+        # padding after the end marker, so a tidy final byte is too much to ask.
+        "image/jpeg": (
+            len(data) >= 4 and data.startswith(b"\xff\xd8\xff")
+            and b"\xff\xd9" in data[-2048:]
+        ),
         "image/webp": (
             len(data) >= 20 and data[:4] == b"RIFF" and data[8:12] == b"WEBP"
             and data[12:16] in {b"VP8 ", b"VP8L", b"VP8X"}
@@ -93,6 +98,13 @@ def verify_content(data, mime):
     }[mime]
     if not valid:
         raise AttachmentError("Image data does not match its PNG, JPEG or WebP type")
+
+
+def content_fingerprint(data):
+    """Markers only — enough to tell why a file was refused, never its content."""
+    head = data[:4].hex()
+    tail = data[-4:].hex()
+    return f"{len(data)}B head={head} tail={tail}"
 
 
 class AttachmentError(ValueError):
@@ -173,6 +185,7 @@ class UploadSink:
         self.mime = mime
         self.received = 0
         self.next_index = 0
+        self.fingerprint = ""
         self.directory.mkdir(mode=0o700, parents=True, exist_ok=True)
         fd, name = tempfile.mkstemp(prefix="upload-", suffix=".part", dir=self.directory)
         self.temp_path = Path(name)
@@ -203,7 +216,11 @@ class UploadSink:
             self._stream.close()
             self._stream = None
             # One bounded read: every ceiling in LIMITS fits comfortably in memory.
-            verify_content(self.temp_path.read_bytes(), self.mime)
+            data = self.temp_path.read_bytes()
+            # Kept for the caller's log: a refusal is useless without a hint at
+            # what actually arrived.
+            self.fingerprint = content_fingerprint(data)
+            verify_content(data, self.mime)
             final = self.temp_path.parent / (self.temp_path.stem + self.extension)
             os.replace(self.temp_path, final)
             return final

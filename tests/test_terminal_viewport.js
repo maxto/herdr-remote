@@ -73,9 +73,11 @@ test('an output update preserves the current controls state', () => {
   const { terminal, document } = terminalHarness();
   terminal.open();
   const button = document.getElementById('terminalControlsToggle');
+  // Whatever the default is, a second open must not undo a deliberate choice.
   button.dispatchEvent(new Event('click'));
+  const chosen = button.attrs['aria-expanded'];
   terminal.open();
-  assert.equal(button.attrs['aria-expanded'], 'true');
+  assert.equal(button.attrs['aria-expanded'], chosen);
 });
 
 test('opening and closing the real terminal view uses the viewport controller', () => {
@@ -102,11 +104,34 @@ test('the floating button changes between show and hide controls icons', () => {
   const button = document.getElementById('terminalControlsToggle');
   const icon = document.getElementById('terminalControlsIcon');
   terminal.open();
-  const showPath = icon.attrs.d;
+  const openedPath = icon.attrs.d;
+  const openedState = button.attrs['aria-expanded'];
   button.dispatchEvent(new Event('click'));
-  assert.equal(button.attrs['aria-expanded'], 'true');
-  assert.notEqual(icon.attrs.d, showPath);
+  assert.notEqual(button.attrs['aria-expanded'], openedState);
+  assert.notEqual(icon.attrs.d, openedPath);
   button.dispatchEvent(new Event('click'));
-  assert.equal(button.attrs['aria-expanded'], 'false');
-  assert.equal(icon.attrs.d, showPath);
+  assert.equal(button.attrs['aria-expanded'], openedState);
+  assert.equal(icon.attrs.d, openedPath);
+});
+
+test('entering a terminal shows its controls rather than hiding them', () => {
+  const { terminal, document } = terminalHarness();
+  const view = document.getElementById('terminalView');
+  terminal.open();
+  // Opening onto bare output reads as a full-screen view with no way in: the
+  // input, the keys and the mode switcher should be there to start with.
+  assert.equal(view.classList.contains('controls-hidden'), false);
+  const toggle = document.getElementById('terminalControlsToggle');
+  assert.equal(toggle.getAttribute('aria-expanded'), 'true');
+});
+
+test('the controls toggle still hides and restores them', () => {
+  const { terminal, document } = terminalHarness();
+  const view = document.getElementById('terminalView');
+  const toggle = document.getElementById('terminalControlsToggle');
+  terminal.open();
+  toggle.dispatchEvent(new Event('click'));
+  assert.equal(view.classList.contains('controls-hidden'), true);
+  toggle.dispatchEvent(new Event('click'));
+  assert.equal(view.classList.contains('controls-hidden'), false);
 });

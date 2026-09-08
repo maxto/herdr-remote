@@ -430,7 +430,9 @@ const TerminalViewport = (() => {
     const resetControls = !opened;
     opened = true;
     document.body.classList.add('terminal-open');
-    if (resetControls) setControlsVisible(false);
+    // Opening onto bare output reads as a full-screen view with no way in.
+    // The toggle is there for anyone who wants the room back.
+    if (resetControls) setControlsVisible(true);
     document.getElementById('contextMenu').style.display = 'none';
     resize();
   }

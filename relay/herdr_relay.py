@@ -1761,6 +1761,11 @@ async def handle_client(ws):
                 try:
                     path = record["sink"].finish()
                 except AttachmentError as exc:
+                    log.warning(
+                        "Attachment refused for pane %s: %s (%s)",
+                        record["pane_id"], exc,
+                        record["sink"].fingerprint or "no bytes read",
+                    )
                     discard_upload(upload_id)
                     await ws.send(upload_failed(str(exc)))
                     continue

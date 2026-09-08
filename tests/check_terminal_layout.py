@@ -49,6 +49,11 @@ async def main():
             await page.wait_for_function("document.body.classList.contains('terminal-open')")
 
             async def check_reading_view():
+                # The controls are on when a terminal opens, so reach the
+                # reading view the way an operator does: by asking for it.
+                hide = page.get_by_role('button', name='Hide terminal controls', exact=True)
+                if await hide.is_visible():
+                    await hide.click()
                 for selector in ['#termHeader', '.term-input', '#termKeys', '#quickDock',
                                  '#quickActions', '#termSearch']:
                     assert not await page.locator(selector).is_visible(), selector

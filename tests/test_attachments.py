@@ -318,3 +318,26 @@ class UploadQuotaTests(unittest.TestCase):
         with self.assertRaises(self.module.AttachmentError):
             quota.reserve(101)
         self.assertEqual(quota.pending_bytes, 0)
+
+
+class JpegToleranceTests(unittest.TestCase):
+    """Real JPEGs are not always tidy at the end."""
+
+    def setUp(self):
+        spec = importlib.util.spec_from_file_location("test_attachment_jpeg", MODULE_PATH)
+        self.module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(self.module)
+
+    def test_padding_after_the_end_marker_is_tolerated(self):
+        """Cameras and screenshot tools append thumbnails, EXIF and padding."""
+        self.module.verify_content(JPEG + b"\x00" * 64, "image/jpeg")
+        self.module.verify_content(JPEG + b"trailing junk from a phone", "image/jpeg")
+
+    def test_a_jpeg_without_an_end_marker_is_still_refused(self):
+        with self.assertRaises(self.module.AttachmentError):
+            self.module.verify_content(JPEG[:-2] + b"\x11" * 64, "image/jpeg")
+
+    def test_a_png_renamed_to_jpg_is_refused(self):
+        """Android often writes PNG under a .jpg name; the bytes decide."""
+        with self.assertRaises(self.module.AttachmentError):
+            self.module.verify_content(PNG, "image/jpeg")
