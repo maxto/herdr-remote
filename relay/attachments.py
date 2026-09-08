@@ -87,7 +87,7 @@ def verify_content(data, mime):
         # padding after the end marker, so a tidy final byte is too much to ask.
         "image/jpeg": (
             len(data) >= 4 and data.startswith(b"\xff\xd8\xff")
-            and b"\xff\xd9" in data[-2048:]
+            and b"\xff\xd9" in data[-64 * 1024:]
         ),
         "image/webp": (
             len(data) >= 20 and data[:4] == b"RIFF" and data[8:12] == b"WEBP"

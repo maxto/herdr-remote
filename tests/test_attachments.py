@@ -329,9 +329,14 @@ class JpegToleranceTests(unittest.TestCase):
         spec.loader.exec_module(self.module)
 
     def test_padding_after_the_end_marker_is_tolerated(self):
-        """Cameras and screenshot tools append thumbnails, EXIF and padding."""
+        """Cameras and screenshot tools append thumbnails, EXIF and padding.
+
+        A real screenshot arrived with 1606 bytes after the marker; an embedded
+        thumbnail runs to several kilobytes, so the window has room for one.
+        """
         self.module.verify_content(JPEG + b"\x00" * 64, "image/jpeg")
         self.module.verify_content(JPEG + b"trailing junk from a phone", "image/jpeg")
+        self.module.verify_content(JPEG + b"\x00" * 32 * 1024, "image/jpeg")
 
     def test_a_jpeg_without_an_end_marker_is_still_refused(self):
         with self.assertRaises(self.module.AttachmentError):
