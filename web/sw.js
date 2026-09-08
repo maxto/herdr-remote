@@ -2,6 +2,16 @@
 self.addEventListener('install', (e) => { self.skipWaiting(); });
 self.addEventListener('activate', (e) => { e.waitUntil(self.clients.claim()); });
 
+// Chrome will not offer to install a page whose worker ignores fetch: without
+// this it proposes a home-screen shortcut instead of the standalone app the
+// manifest asks for.
+//
+// Nothing is cached on purpose. The relay serves the dashboard live and the two
+// speak a protocol that changes together — a cached page would keep chunking
+// attachments the way the relay no longer accepts. Passing the request through
+// without responding leaves it to the network.
+self.addEventListener('fetch', () => {});
+
 self.addEventListener('push', (event) => {
   let data = { title: '🐑 herdr', body: 'Agent needs attention', url: '/' };
   try {

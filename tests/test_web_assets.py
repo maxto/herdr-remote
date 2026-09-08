@@ -207,3 +207,20 @@ class StatusColourTest(unittest.TestCase):
         # A second, hand-rolled ternary is how the two drifted apart before.
         self.assertNotIn("'var(--red)'", card)
         self.assertNotIn("'var(--red)'", timeline)
+
+
+class InstallabilityTest(unittest.TestCase):
+    """Chrome offers to install a page only when its worker handles fetch."""
+
+    def setUp(self):
+        self.worker = (Path(__file__).parent.parent / "web" / "sw.js").read_text(encoding="utf-8")
+
+    def test_the_service_worker_handles_fetch(self):
+        # Without this Chrome offers "Add to Home screen", a shortcut, and
+        # never the standalone install the manifest is written for.
+        self.assertIn("addEventListener('fetch'", self.worker)
+
+    def test_the_dashboard_is_never_served_from_a_cache(self):
+        """A stale page speaks a stale protocol to a relay that has moved on."""
+        for cached in ("caches.open", "cache.put", "cache.addAll", "caches.match"):
+            self.assertNotIn(cached, self.worker, cached)
