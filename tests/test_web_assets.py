@@ -224,3 +224,40 @@ class InstallabilityTest(unittest.TestCase):
         """A stale page speaks a stale protocol to a relay that has moved on."""
         for cached in ("caches.open", "cache.put", "cache.addAll", "caches.match"):
             self.assertNotIn(cached, self.worker, cached)
+
+
+class NotificationVisibilityTest(unittest.TestCase):
+    """Every push must leave something on screen.
+
+    The subscription is userVisibleOnly, which Chrome enforces. The worker
+    used to return early on a "clear" payload to close a notification without
+    showing one, and Chrome filled the silence with "Il sito e stato
+    aggiornato in background" — a placeholder that replaced the real news.
+    """
+
+    def setUp(self):
+        self.worker = (Path(__file__).parent.parent / "web" / "sw.js").read_text(encoding="utf-8")
+
+    def test_the_push_handler_always_shows_a_notification(self):
+        handler = self.worker[self.worker.index("addEventListener('push'"):]
+        handler = handler[:handler.index("addEventListener('notificationclick'")]
+
+        self.assertIn("showNotification", handler)
+        self.assertNotIn("return;", handler)
+        self.assertNotIn("'clear'", handler)
+
+
+class StaleNotificationTest(unittest.TestCase):
+    """Once clearing stops travelling as a push, the page has to do it."""
+
+    def setUp(self):
+        self.source = (Path(__file__).parent.parent / "web" / "index.html").read_text()
+
+    def test_a_snapshot_closes_what_it_no_longer_describes(self):
+        body = self.source[self.source.index("function closeStaleNotifications("):]
+        body = body[:body.index("\nfunction ")]
+
+        self.assertIn("getNotifications", body)
+        for tag in ("herdr-blocked", "herdr-done"):
+            self.assertIn(tag, body, tag)
+

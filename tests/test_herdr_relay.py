@@ -1883,11 +1883,25 @@ class FinishedWorkNotificationTests(unittest.TestCase):
             self.assertEqual(len(finished), 1)
             self.assertIn("crm", finished[0].kwargs["title"])
 
-    def test_looking_at_it_clears_the_notification(self):
+    def test_looking_at_it_sends_no_second_push(self):
+        """A push can never quietly withdraw a notification.
+
+        The subscription is userVisibleOnly, which Chrome enforces: a push
+        whose handler shows nothing is replaced by Chrome's own "site updated
+        in background" notice. A push that only meant "close the previous one"
+        therefore arrived as a placeholder that replaced the very notification
+        it was sent to withdraw. Withdrawing is the page's job now.
+        """
         with self.relay_polling("working", "done", "idle") as (relay, pushes):
-            cleared = [call for call in pushes.await_args_list
-                       if call.kwargs.get("clear") and call.kwargs.get("tag") == "herdr-done"]
-            self.assertEqual(len(cleared), 1)
+            invisible = [call for call in pushes.await_args_list
+                         if not call.kwargs.get("title")]
+            self.assertEqual(invisible, [])
+
+    def test_an_unblocked_agent_sends_no_second_push(self):
+        with self.relay_polling("working", "blocked", "idle") as (relay, pushes):
+            invisible = [call for call in pushes.await_args_list
+                         if not call.kwargs.get("title")]
+            self.assertEqual(invisible, [])
 
     def test_waiting_and_finished_do_not_replace_each_other(self):
         with self.relay_polling("working", "blocked", "done") as (relay, pushes):

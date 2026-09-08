@@ -419,24 +419,50 @@ def _save_push_subs():
         json.dump(push_subscriptions, f)
 
 
-async def send_web_push(title: str, body: str, url: str = "/", clear: bool = False,
-                        tag: str = "herdr-blocked"):
+def describe_subscription(sub):
+    """Name a subscription in the log without writing its endpoint down.
+
+    The tail of an endpoint is a bearer credential for that handset: whoever
+    holds it can push to the phone. The host says which service is carrying the
+    message, and six characters of digest are enough to tell two devices apart
+    and to follow one across restarts.
+    """
+    import urllib.parse as urlparse
+
+    endpoint = sub.get("endpoint", "") if isinstance(sub, dict) else ""
+    host = urlparse.urlsplit(endpoint).netloc or "unknown"
+    return f"{host}#{hashlib.sha256(endpoint.encode()).hexdigest()[:6]}"
+
+
+async def send_web_push(title: str, body: str, url: str = "/", tag: str = "herdr-blocked"):
     """Send push notification to all registered subscriptions.
-    
+
     Uses collapse topic + TTL so offline devices get only the latest.
-    If clear=True, sends a clear instruction instead of showing a notification.
+
+    Every push shows something. The subscription is userVisibleOnly, which
+    Chrome enforces, so a push whose worker displays nothing is replaced by
+    Chrome's own "site updated in background" notice. Withdrawing a stale
+    notification therefore cannot travel as a push; the dashboard closes it.
     """
     if not VAPID_PUBLIC_KEY or not VAPID_PRIVATE_KEY:
+        _warn_change("push:vapid", "Push skipped: VAPID keys are not configured")
         return
+    _clear_warning("push:vapid")
     try:
         from pywebpush import webpush, WebPushException
     except ImportError:
         log.warning("pywebpush not installed, skipping push")
         return
-    if clear:
-        payload = json.dumps({"type": "clear", "tag": tag})
-    else:
-        payload = json.dumps({"title": title, "body": body, "url": url, "tag": tag})
+    payload = json.dumps({"title": title, "body": body, "url": url, "tag": tag})
+    # A push that succeeds used to say nothing, so a silent phone and a relay
+    # that never sent looked identical in the log. Both halves are recorded now.
+    if not push_subscriptions:
+        _warn_change(
+            "push:subs", "Push tag=%s had nowhere to go: no subscriptions registered", tag,
+        )
+        return
+    _clear_warning("push:subs")
+    log.info("Push tag=%s to %d subscription(s)", tag, len(push_subscriptions))
     # The tag is also the collapse key: an agent waiting for an answer and one
     # that has finished are different news and must not overwrite each other.
     headers = {"Topic": tag, "TTL": "21600"}  # 6h TTL
@@ -450,8 +476,9 @@ async def send_web_push(title: str, body: str, url: str = "/", clear: bool = Fal
                 vapid_claims={"sub": VAPID_SUBJECT},
                 headers=headers,
             )
+            log.info("Push tag=%s accepted by %s", tag, describe_subscription(sub))
         except Exception as e:
-            log.warning("Push failed for sub %d: %s", i, e)
+            log.warning("Push tag=%s failed for %s: %s", tag, describe_subscription(sub), e)
             if "410" in str(e) or "404" in str(e):
                 dead.append(i)
     if dead:
@@ -1057,10 +1084,9 @@ async def _poll_once():
                         title=f"\U0001f411 {a['project']} blocked",
                         body=content[:120],
                         url=f"/?pane={pid}",
+                        tag="herdr-blocked",
                     )
             else:
-                if previous == "blocked":
-                    await send_web_push("", "", clear=True, tag="herdr-blocked")
                 last_blocked_prompts.pop(pid, None)
                 # "done" means finished and not yet looked at: herdr moves the
                 # pane back to idle the moment someone opens it, which is also
@@ -1072,8 +1098,6 @@ async def _poll_once():
                         url=f"/?pane={pid}",
                         tag="herdr-done",
                     )
-                elif previous == "done" and status != "done":
-                    await send_web_push("", "", clear=True, tag="herdr-done")
             if poll_seeded and previous != status:
                 record_status_change(a, status)
             last_statuses[pid] = status

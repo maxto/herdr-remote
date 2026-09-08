@@ -1145,6 +1145,7 @@ function handleMessage(msg) {
       };
     });
     render();
+    closeStaleNotifications(agents);
   }
   else if (msg.type === 'agent_update') {
     const update = msg.agent;
@@ -1904,6 +1905,37 @@ function runCommand(cmd) {
 
 // --- Web Push ---
 let pushSubscription = null;
+
+// Withdrawing a notification used to travel as its own push. Chrome requires
+// every push to show something, so the silent one arrived as "the site was
+// updated in background" and replaced the very notification it came to remove.
+// The page withdraws them instead: it is the half of the system that knows
+// what is on screen and what the agents are doing now.
+const notifiedTags = {'herdr-blocked': false, 'herdr-done': false};
+let sweepEveryTag = true;
+
+async function closeStaleNotifications(list) {
+  if (!('serviceWorker' in navigator)) return;
+  const live = {
+    'herdr-blocked': list.some(a => a.status === 'blocked'),
+    'herdr-done': list.some(a => a.status === 'done'),
+  };
+  // A tag is worth sweeping the moment it stops being true, and on the first
+  // snapshot after the app opens — which is when a notification left over from
+  // a closed app finally has someone to answer it.
+  const stale = Object.keys(live).filter(
+    tag => !live[tag] && (sweepEveryTag || notifiedTags[tag])
+  );
+  Object.assign(notifiedTags, live);
+  sweepEveryTag = false;
+  if (!stale.length) return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    for (const tag of stale) {
+      for (const note of await reg.getNotifications({tag})) note.close();
+    }
+  } catch (e) {}
+}
 
 async function initPush() {
   if (!('serviceWorker' in navigator) || !('PushManager' in window)) {

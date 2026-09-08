@@ -12,20 +12,15 @@ self.addEventListener('activate', (e) => { e.waitUntil(self.clients.claim()); })
 // without responding leaves it to the network.
 self.addEventListener('fetch', () => {});
 
+// Every push shows something. The subscription is userVisibleOnly, which Chrome
+// enforces: a handler that displays nothing gets Chrome's own "site updated in
+// background" notice instead, and that placeholder replaced the real news it
+// arrived after. Withdrawing a stale notification is the dashboard's job now.
 self.addEventListener('push', (event) => {
   let data = { title: '🐑 herdr', body: 'Agent needs attention', url: '/' };
   try {
     if (event.data) data = { ...data, ...event.data.json() };
   } catch (e) {}
-  // Clear notification (sent when agent unblocks)
-  if (data.type === 'clear') {
-    event.waitUntil(
-      self.registration.getNotifications({ tag: data.tag || 'herdr-blocked' }).then((notes) => {
-        notes.forEach((n) => n.close());
-      })
-    );
-    return;
-  }
   event.waitUntil(
     self.registration.showNotification(data.title, {
       body: data.body,
