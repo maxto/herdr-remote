@@ -1492,6 +1492,72 @@ class RelaySessionRoutingTests(unittest.TestCase):
             self.assertEqual(self._replies(ws)[-1]["type"], "error")
             self.assertEqual(relay.upload_quota.pending_bytes, 0)
 
+    def _stalled_upload(self, relay, *, idle_for):
+        """Plant a live upload whose sender has gone quiet."""
+        directory = Path(relay.attachment_store.directory)
+        sink = relay.UploadSink(directory, ".txt", total=99, mime="text/plain")
+        token = relay.upload_quota.reserve(99)
+        now = time.monotonic()
+        relay.active_uploads["stalled"] = {
+            "ws": object(), "sink": sink, "token": token, "target": None,
+            "pane_id": "mxdb:w1:p1", "request_id": "u-stalled",
+            "started": now - idle_for, "touched": now - idle_for,
+        }
+        return sink
+
+    def test_a_dropped_connection_takes_its_temporaries_with_it(self):
+        """The script runs out, so handle_client returns: nothing may survive."""
+        with loaded_relay() as relay:
+            self._register_sessions(relay)
+            self._dispatch_many(relay, [
+                {"type": "attachment_begin", "request_id": "u7", "pane_id": "mxdb:w1:p1",
+                 "name": "a.txt", "mime": "text/plain", "size": 6},
+                {"type": "attachment_chunk", "index": 0, "data": base64.b64encode(b"abc").decode()},
+            ])
+            self.assertEqual(relay.active_uploads, {})
+            self.assertEqual(relay.upload_quota.pending_bytes, 0)
+            leftovers = list(Path(relay.attachment_store.directory).glob("*.part"))
+            self.assertEqual(leftovers, [])
+
+    def test_an_idle_upload_expires_and_frees_its_reservation(self):
+        with loaded_relay() as relay:
+            sink = self._stalled_upload(relay, idle_for=relay.UPLOAD_IDLE_TIMEOUT + 1)
+            self.assertEqual(relay.upload_quota.pending_bytes, 99)
+
+            asyncio.run(relay.expire_stale_uploads())
+
+            self.assertEqual(relay.active_uploads, {})
+            self.assertEqual(relay.upload_quota.pending_bytes, 0)
+            self.assertFalse(sink.temp_path.exists())
+
+    def test_a_live_upload_is_left_alone_by_the_sweep(self):
+        with loaded_relay() as relay:
+            self._stalled_upload(relay, idle_for=0)
+            asyncio.run(relay.expire_stale_uploads())
+            self.assertIn("stalled", relay.active_uploads)
+            relay.discard_upload("stalled")
+
+    def test_startup_sweeps_temporaries_left_by_a_crash(self):
+        with loaded_relay() as relay:
+            directory = Path(relay.attachment_store.directory)
+            directory.mkdir(mode=0o700, parents=True, exist_ok=True)
+            orphan = directory / "upload-crashed.part"
+            orphan.write_bytes(b"half a file")
+            keeper = directory / "upload-kept.txt"
+            keeper.write_bytes(b"a finished attachment")
+
+            relay.sweep_partial_uploads()
+
+            self.assertFalse(orphan.exists(), "a crash must not leave temporaries behind")
+            self.assertTrue(keeper.exists(), "finished attachments outlive a restart")
+
+    def test_the_frame_ceiling_only_has_to_fit_one_chunk(self):
+        """Buffer memory follows max_size, so a chunked protocol can shrink it."""
+        with loaded_relay() as relay:
+            self.assertLessEqual(relay.WS_MAX_SIZE, 1024 * 1024)
+            encoded_chunk = 4 * ((relay.CHUNK_BYTES + 2) // 3)
+            self.assertGreater(relay.WS_MAX_SIZE, encoded_chunk)
+
     def test_agent_prompt_is_addressed_to_the_owning_session(self):
         with loaded_relay() as relay:
             self._register_sessions(relay)

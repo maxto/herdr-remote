@@ -13,6 +13,7 @@ except ImportError:
 from websockets.exceptions import ConnectionClosedError, ConnectionClosedOK
 
 from logging.handlers import RotatingFileHandler
+from pathlib import Path
 import sys
 
 try:
@@ -64,7 +65,47 @@ attachment_store = AttachmentStore(os.path.join(DATA_DIR, "attachments"))
 CHUNK_BYTES = 256 * 1024
 MAX_PENDING_UPLOAD_BYTES = 64 * 1024 * 1024
 upload_quota = UploadQuota(max_pending_bytes=MAX_PENDING_UPLOAD_BYTES)
+# An upload holds a slot, a budget and a file handle, so a sender that walks
+# away must not hold them forever.
+UPLOAD_IDLE_TIMEOUT = 30
+UPLOAD_MAX_DURATION = 300
+# Buffer memory follows max_size, so a protocol that never sends a whole file
+# in one frame can afford a far smaller ceiling than one that does.
+WS_MAX_SIZE = 512 * 1024
 active_uploads = {}
+
+
+async def expire_stale_uploads():
+    """Drop uploads whose sender went quiet or that have simply run too long."""
+    now = time.monotonic()
+    for upload_id, record in list(active_uploads.items()):
+        if now - record["touched"] > UPLOAD_IDLE_TIMEOUT or now - record["started"] > UPLOAD_MAX_DURATION:
+            log.info("Abandoning a stalled attachment upload for pane %s", record["pane_id"])
+            discard_upload(upload_id)
+
+
+async def expire_uploads_loop():
+    while True:
+        await asyncio.sleep(UPLOAD_IDLE_TIMEOUT)
+        try:
+            await expire_stale_uploads()
+        except Exception:
+            log.warning("Attachment upload sweep failed", exc_info=True)
+
+
+def sweep_partial_uploads():
+    """Clear temporaries a crash left behind. No upload survives a restart."""
+    directory = Path(attachment_store.directory)
+    try:
+        if not directory.is_dir():
+            return
+        for path in directory.glob("*.part"):
+            try:
+                path.unlink()
+            except OSError:
+                log.warning("Unable to remove a stale attachment temporary")
+    except OSError:
+        log.warning("Unable to inspect attachment storage at startup")
 
 
 def discard_upload(upload_id):
@@ -1761,6 +1802,10 @@ async def handle_client(ws):
         duration = int(time.monotonic() - connected_at)
         log.info("Client disconnected: ip=%s device=%s duration=%ds", ip, device, duration)
         clients.discard(ws)
+        # An upload belongs to its connection; there is no resume to wait for.
+        for upload_id, record in list(active_uploads.items()):
+            if record["ws"] is ws:
+                discard_upload(upload_id)
 
 
 class UDPPlugin(asyncio.DatagramProtocol):
@@ -1843,7 +1888,10 @@ async def main():
             process_request=process_request,
             ping_interval=WS_PING_INTERVAL,
             ping_timeout=WS_PING_TIMEOUT,
+            max_size=WS_MAX_SIZE,
         )
+        sweep_partial_uploads()
+        asyncio.create_task(expire_uploads_loop())
         local_sessions = list_local_sessions()
         hosts = [
             f"local:{session}" if session else "local" for session in local_sessions
