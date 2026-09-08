@@ -1162,6 +1162,7 @@ async def process_request(connection, request):
     static_files = {
         "/manifest.webmanifest": ("manifest.webmanifest", "application/manifest+json", "no-cache"),
         "/icons/icon-192.png": ("icons/icon-192.png", "image/png", "no-cache"),
+        "/icons/icon-180.png": ("icons/icon-180.png", "image/png", "no-cache"),
         "/icons/icon-512.png": ("icons/icon-512.png", "image/png", "no-cache"),
         "/HackNerdFont-Regular.woff2": ("HackNerdFont-Regular.woff2", "font/woff2", "public, max-age=31536000, immutable"),
         "/HackNerdFont-LICENSE.txt": ("HackNerdFont-LICENSE.txt", "text/plain; charset=utf-8", "public, max-age=31536000, immutable"),
