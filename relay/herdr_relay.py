@@ -1704,6 +1704,7 @@ async def handle_client(ws):
                     })
 
                 if msg_type == "attachment_abort":
+                    log.info("Attachment upload cancelled for pane %s", record["pane_id"])
                     discard_upload(upload_id)
                     await ws.send(json.dumps({
                         "type": "command_result", "command": "attachment_abort",
@@ -1723,9 +1724,18 @@ async def handle_client(ws):
                     except (AttachmentError, binascii.Error, ValueError) as exc:
                         discard_upload(upload_id)
                         message = str(exc) if isinstance(exc, AttachmentError) else "Attachment chunk is not valid base64"
+                        # A rejected chunk ends the upload, so say why: without
+                        # this the failure is invisible in the log.
+                        log.warning(
+                            "Attachment chunk refused for pane %s at index %r: %s",
+                            record["pane_id"], msg.get("index"), message,
+                        )
                         await ws.send(upload_failed(message))
                         continue
                     record["touched"] = time.monotonic()
+                    log.debug("Attachment chunk %s accepted for pane %s (%d/%d bytes)",
+                              msg.get("index"), record["pane_id"],
+                              record["sink"].received, record["sink"].total)
                     # The ack is the flow control: the client sends the next
                     # chunk only once this one landed, so a big file cannot be
                     # queued whole in the browser's buffer.
