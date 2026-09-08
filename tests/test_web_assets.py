@@ -261,3 +261,53 @@ class StaleNotificationTest(unittest.TestCase):
         for tag in ("herdr-blocked", "herdr-done"):
             self.assertIn(tag, body, tag)
 
+
+class ReconnectionTest(unittest.TestCase):
+    """Coming back to the app must not be something to sit through.
+
+    Android freezes a backgrounded page and the socket dies with it, so every
+    return is a reconnection. The app waited out a flat three-second timer and
+    announced "connecting" for each one, which turned a gap nobody would have
+    noticed into a wait with a progress label on it.
+    """
+
+    def setUp(self):
+        self.source = (Path(__file__).parent.parent / "web" / "index.html").read_text()
+
+    def test_returning_to_the_app_reconnects_at_once(self):
+        self.assertIn("visibilitychange", self.source)
+        body = self.source[self.source.index("function reconnectNow()"):]
+        body = body[:body.index("\nfunction ")]
+
+        self.assertIn("connect()", body)
+        # A refused token stops the retry loop on purpose: trying again only
+        # replays the same credentials the relay already turned down.
+        self.assertIn("unauthorized", body)
+
+    def test_a_gap_shorter_than_a_glance_is_not_announced(self):
+        body = self.source[self.source.index("function setStatus("):]
+        body = body[:body.index("\nfunction paintStatus(")]
+
+        self.assertIn("agents.length", body)
+        self.assertIn("CONNECTING_GRACE_MS", body)
+
+    def test_opening_the_app_opens_exactly_one_socket(self):
+        """Two entry points used to race on every load.
+
+        One opened a socket as the script ended and the other replaced it a
+        tenth of a second later, so every cold start connected, dropped and
+        reconnected — the flash of "connecting" that greeted every launch, and
+        the pairs of one-second clients in the relay's log.
+        """
+        starts = [line.strip() for line in self.source.splitlines()
+                  if "savedUrl" in line and "connect" in line]
+
+        self.assertEqual(len(starts), 1, starts)
+
+    def test_the_first_retry_does_not_wait_out_a_timer(self):
+        line = self.source[self.source.index("const RECONNECT_LADDER"):]
+        line = line[:line.index("\n")]
+        first = int(line[line.index("[") + 1:line.index(",")])
+
+        self.assertLess(first, 1000, line)
+

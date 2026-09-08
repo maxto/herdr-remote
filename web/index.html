@@ -949,8 +949,48 @@ function connect() {
   connectionController.connect(connection, connect);
 }
 
+// Android freezes a backgrounded page and takes the socket with it. No web app
+// can hold one open there — that is what the push notifications are for — so
+// every return to the app is a reconnection. What the app can do is come back
+// without making a performance of it: retry the moment someone looks at it,
+// and say nothing while a snapshot is still on screen and the gap is short.
+const RECONNECT_LADDER = [300, 1000, 3000, 5000, 10000];
+const CONNECTING_GRACE_MS = 900;
+let reconnectAttempt = 0;
+let connectingNotice = null;
+
+function reconnectDelay() {
+  // The common case is a phone that just woke up, not a relay that is down,
+  // so the first retry is nearly immediate and only a real outage backs off.
+  return RECONNECT_LADDER[Math.min(reconnectAttempt++, RECONNECT_LADDER.length - 1)];
+}
+
+function reconnectNow() {
+  if (!relayUrlFromStorage()) return;
+  // A live socket has nothing to gain from being replaced, and a refused token
+  // stops the retry loop by design: trying again only replays what was refused.
+  if (connectionStatus === 'connected' || connectionStatus === 'unauthorized') return;
+  reconnectAttempt = 0;
+  connect();
+}
+
 function setStatus(s) {
   connectionStatus = s;
+  if (s === 'connected') reconnectAttempt = 0;
+  clearTimeout(connectingNotice);
+  connectingNotice = null;
+  const pending = s === 'connecting' || s === 'authenticating';
+  // Reconnecting under a snapshot that is still true is a hiccup, not news.
+  // Announcing every one of them is what turned an unnoticeable gap into
+  // something to watch, so hold the label until the gap outlasts a glance.
+  if (pending && agents.length) {
+    connectingNotice = setTimeout(() => paintStatus(s), CONNECTING_GRACE_MS);
+    return;
+  }
+  paintStatus(s);
+}
+
+function paintStatus(s) {
   const dot = document.getElementById('statusDot');
   const label = document.getElementById('connLabel');
   const pending = s === 'connecting' || s === 'authenticating';
@@ -1042,8 +1082,18 @@ const connectionController = HerdrSecurity.createConnectionController({
   onSocketChange: socket => { if (ws && ws !== socket) TerminalComposer.disconnected(); ws = socket; },
   onStatus: setStatus,
   openSocket: url => new WebSocket(url),
-  scheduleReconnect: callback => setTimeout(callback, 3000),
+  scheduleReconnect: callback => setTimeout(callback, reconnectDelay()),
 });
+
+// Being looked at again is the strongest hint there is that the socket died
+// while nobody was watching, and it costs nothing to check.
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') reconnectNow();
+});
+window.addEventListener('pageshow', () => {
+  if (document.visibilityState === 'visible') reconnectNow();
+});
+window.addEventListener('online', reconnectNow);
 
 const ANSI_COLORS = ['#000000','#cd3131','#0dbc79','#e5e510','#2472c8','#bc3fbc','#11a8cd','#e5e5e5','#666666','#f14c4c','#23d18b','#f5f543','#3b8eea','#d670d6','#29b8db','#ffffff'];
 
@@ -1816,7 +1866,7 @@ document.getElementById('termContent').addEventListener('scroll', function() {
   if (el.scrollTop === 0 && paneLines < 5000) loadMore();
 });
 
-if (savedUrl) setTimeout(connect, 100); else showSetup();
+if (!savedUrl) showSetup();
 
 // --- Command Palette ---
 const COMMANDS = {
@@ -2016,10 +2066,13 @@ function urlBase64ToUint8Array(base64String) {
 
 initPush();
 
-// A remembered relay and token mean the operator already answered every
-// question the settings screen asks, so open straight into the agent list.
-// This runs last: connect() needs the controller defined above.
-if (savedUrl && relayToken) connect();
+// A remembered relay means the operator already answered the question the
+// settings screen asks, so open straight into the agent list. This is the only
+// place that opens the first socket: a second entry point used to fire a tenth
+// of a second later, throwing away the socket this one had just opened, and a
+// launch that connects, drops and reconnects is what showed "connecting" on
+// every single open.
+if (savedUrl) connect();
 </script>
 </body>
 </html>
