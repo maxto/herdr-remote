@@ -10,7 +10,7 @@
 <link rel="apple-touch-icon" sizes="180x180" href="/icons/icon-180.png">
 <meta name="theme-color" content="#ffffff" media="(prefers-color-scheme: light)">
 <meta name="theme-color" content="#17181c" media="(prefers-color-scheme: dark)">
-<title>herdr-remote</title>
+<title>herdr-app</title>
 <style data-font-face>
 @font-face {
   font-family: 'Hack Nerd Font';
@@ -213,7 +213,7 @@ body.terminal-open #cmdPalette > div:last-child { max-height: 90%; }
 
 <div class="header">
   <span class="dot" id="statusDot"></span>
-  <h1><button type="button" onclick="goHome()" aria-label="Back to agents" class="home-link">herdr</button></h1>
+  <h1><button type="button" onclick="goHome()" aria-label="Back to agents" class="home-link">herdr-app</button></h1>
   <span id="connLabel" style="font-size:0.65rem;font-weight:500"></span>
   <span id="agentCount" style="font-size:0.7rem;color:var(--muted);margin-left:auto"></span>
   <button onclick="toggleTimeline()" aria-label="Timeline"><svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg></button>
@@ -1055,7 +1055,7 @@ function showTokenRejected() {
 function showSetup() {
   document.getElementById('agents').innerHTML = `<div class="empty">
     <p style="font-size:1.5rem;margin-bottom:12px">🐑</p>
-    <p><strong>herdr-remote</strong></p>
+    <p><strong>Herdr App</strong></p>
     <p style="margin-top:8px">Monitor & approve agents from your phone</p>
     <p style="margin-top:16px"><button onclick="tryDemo()" style="padding:10px 20px;border-radius:8px;border:none;background:var(--blue);color:#fff;font-weight:600;font-size:0.85rem;cursor:pointer">Try Demo</button></p>
     <p style="margin-top:16px;font-size:0.75rem;color:var(--muted);text-align:left;max-width:280px;margin-left:auto;margin-right:auto">

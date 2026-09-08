@@ -1,5 +1,6 @@
 from html.parser import HTMLParser
 from pathlib import Path
+import json
 import unittest
 
 
@@ -311,3 +312,43 @@ class ReconnectionTest(unittest.TestCase):
 
         self.assertLess(first, 1000, line)
 
+
+class ProductNameTest(unittest.TestCase):
+    """The app answers to one name, written two ways for two audiences.
+
+    Where the name is a label a person reads — under the icon on a home screen,
+    and on the screen that introduces the app — it is set as a title, "Herdr
+    App". Everywhere it is an identifier the operator reads next to code and
+    hostnames, it stays "herdr-app". What must never happen again is the third
+    and fourth spelling: the tab, the header and the welcome screen once said
+    three different things between them.
+    """
+
+    LABEL = "Herdr App"
+    HANDLE = "herdr-app"
+
+    def setUp(self):
+        self.web = Path(__file__).parent.parent / "web"
+        self.source = (self.web / "index.html").read_text()
+
+    def test_the_installed_app_is_labelled(self):
+        manifest = json.loads((self.web / "manifest.webmanifest").read_text())
+
+        self.assertEqual(manifest["name"], self.LABEL)
+        self.assertEqual(manifest["short_name"], self.LABEL)
+
+    def test_the_welcome_screen_introduces_the_app_by_label(self):
+        self.assertIn(f"<strong>{self.LABEL}</strong>", self.source)
+
+    def test_the_tab_and_the_header_use_the_handle(self):
+        self.assertIn(f"<title>{self.HANDLE}</title>", self.source)
+        self.assertIn(f">{self.HANDLE}</button></h1>", self.source)
+
+    def test_a_notification_without_a_title_still_names_the_app(self):
+        worker = (self.web / "sw.js").read_text(encoding="utf-8")
+
+        self.assertIn(self.HANDLE, worker)
+
+    def test_the_superseded_names_are_gone(self):
+        for stale in ("Herdr Remote", "<title>herdr-remote</title>", ">herdr</button>"):
+            self.assertNotIn(stale, self.source, stale)

@@ -1,4 +1,4 @@
-// herdr-remote service worker — Web Push notifications
+// herdr-app service worker — Web Push notifications
 self.addEventListener('install', (e) => { self.skipWaiting(); });
 self.addEventListener('activate', (e) => { e.waitUntil(self.clients.claim()); });
 
@@ -17,7 +17,7 @@ self.addEventListener('fetch', () => {});
 // background" notice instead, and that placeholder replaced the real news it
 // arrived after. Withdrawing a stale notification is the dashboard's job now.
 self.addEventListener('push', (event) => {
-  let data = { title: '🐑 herdr', body: 'Agent needs attention', url: '/' };
+  let data = { title: '🐑 herdr-app', body: 'Agent needs attention', url: '/' };
   try {
     if (event.data) data = { ...data, ...event.data.json() };
   } catch (e) {}

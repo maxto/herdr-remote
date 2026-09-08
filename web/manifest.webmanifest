@@ -1,7 +1,7 @@
 {
   "id": "/",
-  "name": "Herdr Remote",
-  "short_name": "Herdr",
+  "name": "Herdr App",
+  "short_name": "Herdr App",
   "start_url": "/",
   "scope": "/",
   "display": "standalone",
