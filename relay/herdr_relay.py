@@ -61,8 +61,11 @@ def _get_data_dir():
 
 DATA_DIR = os.environ.get("HERDR_RELAY_DATA_DIR", _get_data_dir())
 attachment_store = AttachmentStore(os.path.join(DATA_DIR, "attachments"))
-# A chunk is the unit the frame ceiling has to fit, so both stay small.
-CHUNK_BYTES = 256 * 1024
+# The frame that carries a chunk is the base64 of it, a third larger again, and
+# it has to survive whatever sits between the phone and the relay — a Cloudflare
+# or Tailscale tunnel refuses far sooner than the local socket does. 96 KiB of
+# payload is 128 KiB on the wire, which passes where 256 KiB did not.
+CHUNK_BYTES = 96 * 1024
 MAX_PENDING_UPLOAD_BYTES = 64 * 1024 * 1024
 upload_quota = UploadQuota(max_pending_bytes=MAX_PENDING_UPLOAD_BYTES)
 # An upload holds a slot, a budget and a file handle, so a sender that walks

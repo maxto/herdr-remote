@@ -512,7 +512,10 @@ const TerminalInput = (() => {
 <script id="terminalUpload">
 const TerminalUpload = (() => {
   const MIB = 1024 * 1024;
-  const CHUNK_BYTES = 256 * 1024;
+  // Kept in step with the relay: the frame is the base64 of this, a third
+  // larger, and a tunnel between the phone and the relay refuses long before
+  // the local socket would.
+  const CHUNK_BYTES = 96 * 1024;
   // A mirror of the relay's table. Refusing here is the whole point: a file
   // that reaches a socket too small to carry it takes the connection down
   // instead of failing, and the upload is never recorded anywhere.

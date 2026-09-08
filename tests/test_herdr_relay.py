@@ -5,6 +5,7 @@ import importlib.util
 import json
 import logging
 import os
+import re
 from pathlib import Path
 import subprocess
 import shutil
@@ -1550,6 +1551,29 @@ class RelaySessionRoutingTests(unittest.TestCase):
 
             self.assertFalse(orphan.exists(), "a crash must not leave temporaries behind")
             self.assertTrue(keeper.exists(), "finished attachments outlive a restart")
+
+    def test_a_chunk_stays_small_enough_to_cross_a_tunnel(self):
+        """The wire carries the base64 of a chunk, a third larger again.
+
+        A Cloudflare or Tailscale tunnel refuses a large frame long before the
+        local socket does, and the refusal arrives as a closed connection with
+        nothing explaining it. 256 KiB of payload became 341 KiB on the wire and
+        died in the tunnel while passing on loopback.
+        """
+        with loaded_relay() as relay:
+            on_the_wire = 4 * ((relay.CHUNK_BYTES + 2) // 3)
+            self.assertLessEqual(
+                on_the_wire, 192 * 1024,
+                "an encoded chunk has to survive the narrowest hop, not just loopback",
+            )
+
+    def test_the_client_chunks_to_the_size_the_relay_expects(self):
+        """A client that chunks larger than the relay accepts stalls silently."""
+        with loaded_relay() as relay:
+            page = (Path(__file__).parent.parent / "web" / "index.html").read_text(encoding="utf-8")
+            declared = re.search(r"const CHUNK_BYTES = ([\d\s*]+);", page)
+            self.assertIsNotNone(declared, "the dashboard must declare its chunk size")
+            self.assertEqual(eval(declared.group(1).strip()), relay.CHUNK_BYTES)
 
     def test_the_frame_ceiling_only_has_to_fit_one_chunk(self):
         """Buffer memory follows max_size, so a chunked protocol can shrink it."""
