@@ -8,3 +8,6 @@ __pycache__/
 .venv/
 .wrangler/
 .worktrees/
+
+# WSL leaves these behind when a file is copied from Windows.
+*:Zone.Identifier
