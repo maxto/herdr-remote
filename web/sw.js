@@ -33,6 +33,21 @@ self.addEventListener('push', (event) => {
   );
 });
 
+// A browser may replace a subscription whenever it likes, and the page cannot
+// be relied on to be open when it happens. Resubscribing here keeps the handset
+// reachable; the dashboard hands the new endpoint to the relay the next time it
+// connects. The original key has to be reused, or the new subscription is one
+// the relay's VAPID keys cannot sign for.
+self.addEventListener('pushsubscriptionchange', (event) => {
+  const key = event.oldSubscription && event.oldSubscription.options
+    ? event.oldSubscription.options.applicationServerKey
+    : null;
+  if (!key) return;
+  event.waitUntil(
+    self.registration.pushManager.subscribe({ userVisibleOnly: true, applicationServerKey: key })
+  );
+});
+
 self.addEventListener('notificationclick', (event) => {
   event.notification.close();
   const url = event.notification.data?.url || '/';

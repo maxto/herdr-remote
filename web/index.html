@@ -1077,7 +1077,7 @@ function tryDemo() {
 
 const connectionController = HerdrSecurity.createConnectionController({
   cancelReconnect: clearTimeout,
-  onAuthenticated: () => { if(window.cue) cue('ready'); },
+  onAuthenticated: () => { if(window.cue) cue('ready'); registerPushSubscription(); },
   onMessage: handleMessage,
   onSocketChange: socket => { if (ws && ws !== socket) TerminalComposer.disconnected(); ws = socket; },
   onStatus: setStatus,
@@ -2000,6 +2000,26 @@ async function initPush() {
   } catch (e) {
     document.getElementById('pushStatus').textContent = 'Service worker error: ' + e.message;
   }
+}
+
+// The relay used to hear about a subscription only when somebody pressed the
+// button. Browsers replace one whenever they please, so its copy could name an
+// endpoint that had been gone for days while this page still read "Enabled" —
+// the relay pushing into 410 Gone, and nothing on screen admitting it. Sending
+// what the browser actually holds on every authenticated connection makes the
+// two agree by construction; the relay ignores one it already has.
+async function registerPushSubscription() {
+  if (!('serviceWorker' in navigator) || !('PushManager' in window)) return;
+  try {
+    const reg = await navigator.serviceWorker.ready;
+    const subscription = await reg.pushManager.getSubscription();
+    if (!subscription) return;
+    pushSubscription = subscription;
+    updatePushUI();
+    if (ws && ws.readyState === 1) {
+      ws.send(JSON.stringify({type: 'push_subscribe', subscription: subscription.toJSON()}));
+    }
+  } catch (e) {}
 }
 
 function updatePushUI() {

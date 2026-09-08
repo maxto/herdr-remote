@@ -240,8 +240,11 @@ class NotificationVisibilityTest(unittest.TestCase):
         self.worker = (Path(__file__).parent.parent / "web" / "sw.js").read_text(encoding="utf-8")
 
     def test_the_push_handler_always_shows_a_notification(self):
-        handler = self.worker[self.worker.index("addEventListener('push'"):]
-        handler = handler[:handler.index("addEventListener('notificationclick'")]
+        start = self.worker.index("self.addEventListener('push', (event)")
+        handler = self.worker[start:]
+        # Bounded by the next listener, whatever it happens to be: a handler
+        # added in between must not be read as part of this one.
+        handler = handler[:handler.index("\nself.addEventListener(", 1)]
 
         self.assertIn("showNotification", handler)
         self.assertNotIn("return;", handler)
@@ -352,3 +355,41 @@ class ProductNameTest(unittest.TestCase):
     def test_the_superseded_names_are_gone(self):
         for stale in ("Herdr Remote", "<title>herdr-remote</title>", ">herdr</button>"):
             self.assertNotIn(stale, self.source, stale)
+
+
+class SubscriptionRegistrationTest(unittest.TestCase):
+    """The relay's copy of a subscription must not be able to drift.
+
+    The page asked the browser for its subscription on load and never told the
+    relay about it, so the relay only ever learned one when somebody pressed
+    the button. Once Chrome replaced a subscription the relay went on pushing
+    at an endpoint that answered 410 Gone while the app still read "Enabled",
+    and notifications stopped with nothing on screen to say so.
+    """
+
+    def setUp(self):
+        self.web = Path(__file__).parent.parent / "web"
+        self.source = (self.web / "index.html").read_text()
+        self.worker = (self.web / "sw.js").read_text(encoding="utf-8")
+
+    def test_an_authenticated_connection_registers_what_the_browser_holds(self):
+        body = self.source[self.source.index("async function registerPushSubscription("):]
+        body = body[:body.index("\nfunction ")]
+
+        self.assertIn("getSubscription", body)
+        self.assertIn("push_subscribe", body)
+
+    def test_every_connection_does_it_rather_than_only_the_button(self):
+        line = self.source[self.source.index("onAuthenticated:"):]
+        line = line[:line.index("\n")]
+
+        self.assertIn("registerPushSubscription()", line)
+
+    def test_the_worker_resubscribes_when_the_browser_replaces_one(self):
+        self.assertIn("pushsubscriptionchange", self.worker)
+        handler = self.worker[self.worker.index("addEventListener('pushsubscriptionchange'"):]
+
+        # Resubscribing without the original key yields a subscription the
+        # relay's VAPID keys cannot sign for.
+        self.assertIn("applicationServerKey", handler)
+        self.assertIn("oldSubscription", handler)
