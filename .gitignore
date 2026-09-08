@@ -11,3 +11,6 @@ __pycache__/
 
 # WSL leaves these behind when a file is copied from Windows.
 *:Zone.Identifier
+
+# Chrome writes this next to whatever directory it was launched from.
+debug.log
