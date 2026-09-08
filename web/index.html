@@ -132,6 +132,14 @@ body.terminal-open > .header { display: none; }
 .quick-actions:empty { display: none; }
 .quick-actions button { padding: 10px 14px; border-radius: 8px; border: none; font-size: 0.8rem; font-weight: 600; cursor: pointer; flex: 1; min-width: 70px; display: flex; align-items: center; justify-content: center; gap: 6px; }
 .btn-yes { background: var(--green); color: #fff; } .btn-trust { background: var(--blue); color: #fff; } .btn-no { background: var(--red); color: #fff; }
+.attachment-preview { display: flex; align-items: center; gap: 8px; padding: 4px 12px; flex-shrink: 0; background: var(--surface); }
+.attachment-preview[hidden], .composer-status[hidden] { display: none; }
+.attachment-preview img { width: 40px; height: 40px; object-fit: contain; border-radius: 4px; }
+.attachment-preview span:first-of-type { flex: 1; min-width: 0; overflow: hidden; white-space: nowrap; text-overflow: ellipsis; font-size: 12px; }
+#attachmentProgress { font-size: 12px; color: var(--muted); font-variant-numeric: tabular-nums; }
+#attachmentRemove { width: 32px; height: 32px; border: none; border-radius: 6px; background: var(--bg); color: var(--text); cursor: pointer; flex-shrink: 0; }
+#attachmentButton { width: 40px; border: none; border-radius: 6px; background: var(--bg); color: var(--text); font-size: 22px; line-height: 1; cursor: pointer; flex-shrink: 0; }
+.composer-status { margin: 0; padding: 4px 12px; font-size: 12px; background: var(--surface); color: var(--text); flex-shrink: 0; max-height: 48px; overflow: auto; }
 .term-input { border-top: 1px solid var(--border); padding: 8px 12px; display: flex; gap: 6px; background: var(--surface); flex-shrink: 0; }
 .term-input input { flex: 1; padding: 10px; border-radius: 6px; border: 1px solid var(--border); background: var(--bg); color: var(--text); font-size: 16px; font-family: 'Hack Nerd Font', 'CaskaydiaCove Nerd Font Mono', 'JetBrainsMono Nerd Font Mono', Consolas, monospace; min-width: 0; }
 .term-input button:last-child { padding: 10px 14px; border-radius: 6px; border: none; background: var(--blue); color: #fff; font-weight: 700; font-size: 16px; flex-shrink: 0; }
@@ -257,7 +265,16 @@ body.terminal-open #cmdPalette > div:last-child { max-height: 90%; }
   </div>
   <div class="term-content" id="termContent">Loading…</div>
   <p id="composerStatus" class="composer-status" role="status" hidden></p>
+  <div class="attachment-preview" id="attachmentPreview" hidden>
+    <img id="attachmentThumb" alt="" hidden>
+    <span id="attachmentName"></span>
+    <span id="attachmentProgress" aria-live="polite"></span>
+    <button type="button" id="attachmentRemove" onclick="removeAttachment()" aria-label="Remove attachment">✕</button>
+  </div>
+  <p class="composer-status" id="uploadStatus" role="status" hidden></p>
+  <input id="attachmentInput" type="file" accept="image/png,image/jpeg,image/webp,application/pdf,text/plain,text/markdown,text/csv,application/json,.md,.csv,.json,.txt" hidden onchange="pickAttachment(this)">
   <div class="term-input" id="termInputBar">
+    <button type="button" id="attachmentButton" onclick="document.getElementById('attachmentInput').click()" aria-label="Attach a file">+</button>
     <input id="termInput" placeholder="Type…" autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false" />
     <button id="sendTextButton" onclick="sendText()" aria-label="Send" style="padding:10px 14px;border-radius:6px;border:none;background:var(--blue);color:#fff;flex-shrink:0"><svg width="18" height="18" viewBox="0 0 24 24" fill="currentColor" stroke="none"><path d="M2.01 21L23 12 2.01 3 2 10l15 2-15 2z"/></svg></button>
   </div>
@@ -487,6 +504,189 @@ const TerminalInput = (() => {
 })();
 </script>
 <script src="./security.js"></script>
+<script id="terminalUpload">
+const TerminalUpload = (() => {
+  const MIB = 1024 * 1024;
+  const CHUNK_BYTES = 256 * 1024;
+  // A mirror of the relay's table. Refusing here is the whole point: a file
+  // that reaches a socket too small to carry it takes the connection down
+  // instead of failing, and the upload is never recorded anywhere.
+  const LIMITS = {
+    'image/png': 10 * MIB, 'image/jpeg': 10 * MIB, 'image/webp': 10 * MIB,
+    'application/pdf': 25 * MIB,
+    'text/plain': MIB, 'text/markdown': MIB, 'text/csv': MIB, 'application/json': MIB,
+  };
+  // Browsers often report an empty or wrong type, so the extension gets a say.
+  const BY_EXTENSION = {
+    png: 'image/png', jpg: 'image/jpeg', jpeg: 'image/jpeg', webp: 'image/webp',
+    pdf: 'application/pdf', txt: 'text/plain', md: 'text/markdown',
+    csv: 'text/csv', json: 'application/json',
+  };
+  const ALPHABET = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789+/';
+
+  let file = null, mime = '', message = '', uploadId = null, sent = 0;
+  let requestId = null, waiting = null, thumbnail = null;
+
+  const preview = () => document.getElementById('attachmentPreview');
+  const nameLabel = () => document.getElementById('attachmentName');
+  const progressLabel = () => document.getElementById('attachmentProgress');
+  const thumb = () => document.getElementById('attachmentThumb');
+  const statusLine = () => document.getElementById('uploadStatus');
+
+  function encode(bytes) {
+    let out = '';
+    for (let i = 0; i < bytes.length; i += 3) {
+      const a = bytes[i], b = bytes[i + 1], c = bytes[i + 2];
+      out += ALPHABET[a >> 2];
+      out += ALPHABET[((a & 3) << 4) | ((b === undefined ? 0 : b) >> 4)];
+      out += b === undefined ? '=' : ALPHABET[((b & 15) << 2) | ((c === undefined ? 0 : c) >> 6)];
+      out += c === undefined ? '=' : ALPHABET[c & 63];
+    }
+    return out;
+  }
+
+  function typeOf(candidate) {
+    if (LIMITS[candidate.type]) return candidate.type;
+    const parts = String(candidate.name || '').split('.');
+    return parts.length > 1 ? (BY_EXTENSION[parts.pop().toLowerCase()] || '') : '';
+  }
+
+  function render() {
+    const box = preview();
+    if (box) box.hidden = !file;
+    if (file) {
+      const label = nameLabel();
+      if (label) label.textContent = file.name;
+      const picture = thumb();
+      if (picture) {
+        picture.hidden = !thumbnail;
+        if (thumbnail) picture.src = thumbnail;
+      }
+      const bar = progressLabel();
+      if (bar) bar.textContent = uploadId ? `${Math.round(progress() * 100)}%` : '';
+    }
+    const line = statusLine();
+    if (line) {
+      line.textContent = message;
+      line.hidden = !message;
+    }
+  }
+
+  function reset() {
+    file = null; mime = ''; uploadId = null; sent = 0; requestId = null;
+    waiting = null; thumbnail = null;
+    render();
+  }
+
+  function choose(candidate) {
+    if (!candidate) return false;
+    const kind = typeOf(candidate);
+    if (!kind) {
+      message = 'Choose an image, a PDF or a text file';
+      render();
+      return false;
+    }
+    // Judged before a single byte is read, which is what the first attempt
+    // never did: an 11 MiB photo went straight to the socket.
+    if (candidate.size > LIMITS[kind]) {
+      message = `A ${kind.split('/').pop().toUpperCase()} is limited to ${LIMITS[kind] / MIB} MiB`;
+      render();
+      return false;
+    }
+    file = candidate; mime = kind; message = ''; uploadId = null; sent = 0;
+    thumbnail = null;
+    render();
+    return true;
+  }
+
+  function expect(predicate) {
+    return new Promise((resolve, reject) => { waiting = { predicate, resolve, reject }; });
+  }
+
+  function handleMessage(incoming) {
+    if (!waiting || !incoming || incoming.request_id !== requestId) return false;
+    const pending = waiting;
+    if (incoming.type === 'error') {
+      waiting = null;
+      pending.reject(new Error(incoming.message || 'The relay refused this file'));
+      return true;
+    }
+    if (!pending.predicate(incoming)) return false;
+    waiting = null;
+    pending.resolve(incoming);
+    return true;
+  }
+
+  async function send(socket, paneId, text) {
+    if (!file || uploadId) return false;
+    if (!socket || socket.readyState !== 1) {
+      message = 'Not connected. Your file has been kept.';
+      render();
+      return false;
+    }
+    requestId = `up-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    message = 'Sending…';
+    sent = 0;
+    render();
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      socket.send(JSON.stringify({
+        type: 'attachment_begin', request_id: requestId, pane_id: paneId,
+        name: file.name, mime, size: bytes.length,
+      }));
+      const opened = await expect(m => m.command === 'attachment_begin' && m.upload_id);
+      uploadId = opened.upload_id;
+      for (let index = 0, offset = 0; offset < bytes.length; index += 1, offset += CHUNK_BYTES) {
+        const slice = bytes.subarray(offset, offset + CHUNK_BYTES);
+        socket.send(JSON.stringify({
+          type: 'attachment_chunk', upload_id: uploadId, index, data: encode(slice),
+        }));
+        // One chunk in flight. Browsers buffer rather than block on send, so
+        // without this the whole file would queue in the page regardless.
+        await expect(m => m.command === 'attachment_chunk' && m.index === index);
+        sent += slice.length;
+        render();
+      }
+      socket.send(JSON.stringify({
+        type: 'attachment_commit', upload_id: uploadId, text: text || '',
+      }));
+      await expect(m => m.command === 'attachment_commit');
+      message = '';
+      reset();
+      return true;
+    } catch (error) {
+      // The file stays: the operator chose it once and should not have to again.
+      uploadId = null;
+      waiting = null;
+      message = error.message || 'This file could not be sent';
+      render();
+      return false;
+    }
+  }
+
+  function cancel(socket) {
+    if (uploadId && socket && socket.readyState === 1) {
+      socket.send(JSON.stringify({ type: 'attachment_abort', upload_id: uploadId }));
+    }
+    if (waiting) {
+      const pending = waiting;
+      waiting = null;
+      pending.reject(new Error('Cancelled'));
+    }
+    message = '';
+    reset();
+  }
+
+  const progress = () => (file && file.size ? sent / file.size : 0);
+
+  return {
+    choose, send, cancel, reset, handleMessage, progress,
+    hasFile: () => Boolean(file),
+    status: () => message,
+    mime: () => mime,
+  };
+})();
+</script>
 <script id="terminalComposer">
 const TerminalComposer = (() => {
   const drafts = new Map();
@@ -907,6 +1107,7 @@ function ansiFragment(input) {
 }
 
 function handleMessage(msg) {
+  if (TerminalUpload.handleMessage(msg)) return;
   if (TerminalComposer.handleMessage(msg)) return;
   if (msg.type === 'agents') {
     // Track timeline on status changes
@@ -1453,7 +1654,17 @@ function setupLongPress(el, type, id, name) {
 
 async function sendText() {
   const i=document.getElementById('termInput');
-  if(!i.value||!activePane)return;
+  if(!activePane)return;
+  if (TerminalUpload.hasFile()) {
+    // The file carries the text with it, so the agent reads them together.
+    const text = i.value;
+    if (await TerminalUpload.send(ws, activePane, text)) {
+      i.value = '';
+      setTimeout(refreshPane, 500);
+    }
+    return;
+  }
+  if(!i.value)return;
   const agent=agents.find(a=>a.pane_id===activePane);
   if(agent&&agent.status==='blocked') {
     if(!ws||ws.readyState!==WebSocket.OPEN)return;
@@ -1463,6 +1674,12 @@ async function sendText() {
     TerminalComposer.send(ws, activePane);
   }
 }
+function pickAttachment(input) {
+  const chosen = input.files && input.files[0];
+  if (chosen) TerminalUpload.choose(chosen);
+  input.value = '';
+}
+function removeAttachment() { TerminalUpload.cancel(ws); }
 function sendKey(k){if(!ws||!activePane)return;ws.send(JSON.stringify({type:'send_keys',pane_id:activePane,keys:[k]}));setTimeout(refreshPane,300);}
 function sendKeys(k){if(!ws||!activePane)return;ws.send(JSON.stringify({type:'send_keys',pane_id:activePane,keys:k}));setTimeout(refreshPane,300);}
 

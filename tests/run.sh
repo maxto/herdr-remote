@@ -87,7 +87,11 @@ echo "10c. terminal viewport"
 node "$DIR/tests/test_terminal_viewport.js"
 assert_eq "$?" "0" "terminal viewport"
 
-echo "10d. mobile browser layout"
+echo "10d. attachment uploads"
+node "$DIR/tests/test_web_attachments.js"
+assert_eq "$?" "0" "attachment uploads"
+
+echo "10e. mobile browser layout"
 if [ "${HERDR_BROWSER_TESTS:-0}" = "1" ]; then
   uv run --with playwright python "$DIR/tests/check_terminal_layout.py"
   assert_eq "$?" "0" "mobile layout and text composer"

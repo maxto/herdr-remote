@@ -56,15 +56,14 @@ class TerminalControlSurfaceTest(unittest.TestCase):
         self.assertNotIn("requestFullscreen", self.markup)
         self.assertNotIn("exitFullscreen", self.markup)
 
-    def test_attachment_controls_and_protocol_are_absent(self):
-        for attachment_feature in (
-            'id="addAttachment"',
-            'id="attachmentInput"',
-            'id="attachmentPreview"',
-            'id="terminalAttachments"',
-            "send_attachment",
-        ):
-            self.assertNotIn(attachment_feature, self.markup, attachment_feature)
+    def test_the_composer_can_attach_a_file(self):
+        """Attachments returned as a chunked upload, so the controls are back."""
+        for control in ('id="attachmentInput"', 'id="attachmentPreview"', 'id="terminalUpload"'):
+            self.assertIn(control, self.markup, control)
+        # The single-message protocol is what failed; it must not come back.
+        self.assertNotIn("send_attachment", self.markup)
+        self.assertIn("attachment_begin", self.markup)
+        self.assertIn("attachment_chunk", self.markup)
 
 
 class CredentialFieldCollector(HTMLParser):
