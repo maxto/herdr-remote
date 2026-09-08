@@ -96,11 +96,22 @@ async def main():
                     pageWidth: document.documentElement.scrollWidth,
                     headerHidden: getComputedStyle(document.querySelector('body > .header')).display === 'none',
                     controls: [...document.querySelectorAll('.term-header button')].filter(b => !b.hidden)
-                      .map(b => ({right: b.getBoundingClientRect().right, bottom: b.getBoundingClientRect().bottom}))};
+                      .map(b => ({right: b.getBoundingClientRect().right, bottom: b.getBoundingClientRect().bottom})),
+                    // Everything the composer stacks below the input, which the
+                    // input's own bottom says nothing about.
+                    below: [...document.getElementById('terminalView').children]
+                      .filter(el => !el.hidden
+                        && getComputedStyle(el).display !== 'none'
+                        && getComputedStyle(el).position === 'static')
+                      .map(el => ({id: el.id, bottom: el.getBoundingClientRect().bottom}))};
                 }""")
                 assert metrics["headerHidden"], metrics
                 assert metrics["view"]["x"] >= -1 and metrics["view"]["y"] >= -1, metrics
                 assert metrics["input"]["bottom"] <= height + 1, metrics
+                # A row under the input is just as unreachable when it falls off
+                # the screen, and the input's own bottom cannot reveal that.
+                for row in metrics["below"]:
+                    assert row["bottom"] <= height + 1, (row, metrics)
                 assert metrics["input"]["right"] <= width + 1, metrics
                 assert metrics["output"]["height"] >= 26, metrics
                 assert metrics["scrollWidth"] <= metrics["clientWidth"] + 1, metrics
@@ -206,6 +217,52 @@ async def main():
             assert 'Synthetic delivery failure' in await page.locator('#composerStatus').inner_text()
             await check_layout(852, 190, 'text error with keyboard space')
             await page.screenshot(path=str(screenshots / 'text-error-keyboard.png'))
+
+            # A file adds a preview row and a percentage to the composer, which
+            # is the column that already has the least room in landscape.
+            # The socket lives in its own global: resizing the viewport lets the
+            # real connection controller replace `ws` underneath a long test.
+            await page.evaluate("""() => {
+              window.uploadSent = [];
+              window.uploadSocket = {readyState: 1, bufferedAmount: 0,
+                send(raw) { window.uploadSent.push(JSON.parse(raw)); }};
+              TerminalUpload.choose({
+                name: 'una-fotografia-con-un-nome-molto-lungo.png',
+                type: 'image/png', size: 2048,
+                arrayBuffer: async () => new ArrayBuffer(2048),
+              });
+            }""")
+            assert await page.locator('#attachmentPreview').is_visible()
+            await check_layout(852, 190, 'attachment with keyboard space')
+            await page.screenshot(path=str(screenshots / 'attachment-keyboard.png'))
+
+            # Mid-upload: the percentage is filled in and the file is still there.
+            # The promise is not returned, because it settles only once the whole
+            # upload is acknowledged and evaluate would wait for it.
+            await page.evaluate(
+                "() => { TerminalUpload.send(window.uploadSocket, 'demo:workspace:p1', 'guarda'); }"
+            )
+            await page.wait_for_function("uploadSent.some(m => m.type === 'attachment_begin')")
+            await page.evaluate("""() => {
+              const begin = uploadSent.find(m => m.type === 'attachment_begin');
+              TerminalUpload.handleMessage({type: 'command_result',
+                command: 'attachment_begin', request_id: begin.request_id,
+                upload_id: 'layout-1', ok: true});
+            }""")
+            await check_layout(852, 190, 'attachment uploading with keyboard space')
+
+            # And the state that broke the previous composer: an error message
+            # under a preview that is still on screen.
+            await page.evaluate("""() => {
+              const begin = uploadSent.find(m => m.type === 'attachment_begin');
+              TerminalUpload.handleMessage({type: 'error', request_id: begin.request_id,
+                message: 'Synthetic upload failure that is long enough to wrap on a narrow screen'});
+            }""")
+            assert await page.locator('#uploadStatus').is_visible()
+            await check_layout(852, 190, 'attachment error with keyboard space')
+            await page.screenshot(path=str(screenshots / 'attachment-error-keyboard.png'))
+            await page.evaluate("() => { TerminalUpload.cancel(window.uploadSocket); }")
+            assert not await page.locator('#attachmentPreview').is_visible()
             assert not await page.get_by_role('button', name='Send', exact=True).is_disabled()
             # The dashboard's real connection controller may update the global
             # socket while this long synthetic test changes the viewport.
