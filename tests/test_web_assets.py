@@ -221,10 +221,28 @@ class InstallabilityTest(unittest.TestCase):
         # never the standalone install the manifest is written for.
         self.assertIn("addEventListener('fetch'", self.worker)
 
-    def test_the_dashboard_is_never_served_from_a_cache(self):
-        """A stale page speaks a stale protocol to a relay that has moved on."""
-        for cached in ("caches.open", "cache.put", "cache.addAll", "caches.match"):
-            self.assertNotIn(cached, self.worker, cached)
+    def test_a_reachable_relay_always_wins_over_the_cache(self):
+        """A stale page speaks a stale protocol to a relay that has moved on.
+
+        The worker keeps a copy of the page so that a blink in the tunnel does
+        not leave an installed app on Chrome's error page with nothing to
+        retry. That copy is a fallback and never a source: the network is asked
+        first, and the cache is only read once it has failed.
+        """
+        body = self.worker[self.worker.index("async function shellResponse"):]
+        body = body[:body.index("\n}")]
+
+        self.assertLess(body.index("await fetch("), body.index("cache.match("))
+
+    def test_only_the_files_the_page_boots_from_are_kept(self):
+        # index.html loads ./security.js, so a page cached without it opens to
+        # a blank screen. The font and the icons are megabytes that buy nothing.
+        body = self.worker[self.worker.index("function shellKey"):]
+        body = body[:body.index("\n}")]
+
+        self.assertIn("'/security.js'", body)
+        for bulky in ("woff2", "icon-192", "logo.svg"):
+            self.assertNotIn(bulky, body, bulky)
 
 
 class NotificationVisibilityTest(unittest.TestCase):
