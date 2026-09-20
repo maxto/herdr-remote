@@ -408,6 +408,55 @@ class RelayInstallationTests(unittest.TestCase):
                     self.assertEqual(response.status_code, 401)
 
 
+class ShellRequestLogTests(unittest.TestCase):
+    """The log must say whether a phone's page requests arrive at all.
+
+    The relay recorded WebSocket connections and nothing else, so an evening of
+    "offline" on a handset left no trace beyond a gap in the file. Nothing
+    distinguished a page that was never asked for from one that loaded and then
+    failed to open a socket — the two call for opposite fixes.
+    """
+
+    def _get(self, relay, path, user_agent=""):
+        headers = _Headers({"User-Agent": user_agent} if user_agent else {})
+        request = types.SimpleNamespace(path=path, headers=headers)
+        return asyncio.run(relay.process_request(None, request))
+
+    ANDROID = "Mozilla/5.0 (Linux; Android 14; realme GT 7 Pro) Chrome/140 Mobile"
+
+    def test_a_request_for_the_page_is_recorded_with_the_device(self):
+        with loaded_relay() as relay:
+            relay.log.disabled = False
+            with self.assertLogs(relay.log, level="INFO") as captured:
+                self._get(relay, "/", user_agent=self.ANDROID)
+
+        self.assertTrue(
+            any("path=/" in line and "device=Android" in line for line in captured.output),
+            captured.output,
+        )
+
+    def test_every_file_a_cold_start_boots_from_is_recorded(self):
+        # A page that loads but whose helper does not still cannot connect.
+        for path in ("/", "/index.html", "/security.js", "/sw.js"):
+            with loaded_relay() as relay:
+                relay.log.disabled = False
+                with self.assertLogs(relay.log, level="INFO") as captured:
+                    self._get(relay, path, user_agent=self.ANDROID)
+
+            self.assertTrue(
+                any(f"path={path}" in line for line in captured.output), path
+            )
+
+    def test_the_assets_of_every_load_stay_out_of_the_log(self):
+        """Icons and a megabyte of font would bury the signal they surround."""
+        noisy = ("/icons/icon-192.png", "/HackNerdFont-Regular.woff2", "/manifest.webmanifest")
+        for path in noisy:
+            with loaded_relay() as relay:
+                relay.log.disabled = False
+                with self.assertNoLogs(relay.log, level="INFO"):
+                    self._get(relay, path, user_agent=self.ANDROID)
+
+
 class RelayConfigurationTests(unittest.TestCase):
     def test_relay_defaults_to_loopback(self):
         with loaded_relay() as relay:

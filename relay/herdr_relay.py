@@ -1175,6 +1175,35 @@ async def event_push():
             await broadcast(message)
 
 
+def device_from_user_agent(ua: str) -> str:
+    """Name the kind of client behind a User-Agent, for the log."""
+    ua_lower = (ua or "").lower()
+    if "iphone" in ua_lower or "ipad" in ua_lower:
+        return "iOS"
+    if "android" in ua_lower:
+        return "Android"
+    if "macintosh" in ua_lower or "mac os" in ua_lower:
+        return "macOS"
+    if "windows" in ua_lower:
+        return "Windows"
+    if "linux" in ua_lower:
+        return "Linux"
+    if "telegram" in ua_lower or "bot" in ua_lower:
+        return "bot"
+    if "python" in ua_lower:
+        return "script"
+    return "unknown"
+
+
+# What a cold start fetches before it can open a socket. The relay logged
+# WebSocket connections and nothing else, so an evening of "offline" on a
+# handset left no trace beyond a gap in the file — and a page that was never
+# asked for calls for a different fix than one that loaded and could not
+# connect. The icons, the font and the manifest are deliberately absent: they
+# arrive with every load and would bury the signal they surround.
+SHELL_PATHS = ("/", "/index.html", "/security.js", "/sw.js")
+
+
 async def process_request(connection, request):
     """Handle HTTP POST on the same port as WebSocket."""
     from websockets.http11 import Response
@@ -1202,16 +1231,30 @@ async def process_request(connection, request):
 
     upgrade = None
     origin = ""
+    user_agent = ""
     for key, value in request.headers.raw_items():
         if key.lower() == "upgrade":
             upgrade = value.lower()
         elif key.lower() == "origin":
             origin = value
+        elif key.lower() == "user-agent":
+            user_agent = value
     if upgrade == "websocket":
         if not origin_is_allowed(origin):
             headers = Headers([("Content-Type", "text/plain")])
             return Response(403, "Forbidden", headers, b"Origin not allowed\n")
         return None
+
+    # Recorded as the request arrives, before auth or routing can turn it into
+    # something else: the point is evidence that the handset reached the relay
+    # at all.
+    if request_path in SHELL_PATHS:
+        log.info(
+            "Page request: path=%s device=%s origin=%s",
+            request_path,
+            device_from_user_agent(user_agent),
+            origin or "-",
+        )
 
     # Token auth (if configured)
     if AUTH_TOKEN and request_path not in public_paths:
@@ -1448,22 +1491,7 @@ async def handle_client(ws):
         else False
     )
 
-    device = "unknown"
-    ua_lower = ua.lower()
-    if "iphone" in ua_lower or "ipad" in ua_lower:
-        device = "iOS"
-    elif "android" in ua_lower:
-        device = "Android"
-    elif "macintosh" in ua_lower or "mac os" in ua_lower:
-        device = "macOS"
-    elif "windows" in ua_lower:
-        device = "Windows"
-    elif "linux" in ua_lower:
-        device = "Linux"
-    elif "telegram" in ua_lower or "bot" in ua_lower:
-        device = "bot"
-    elif "python" in ua_lower:
-        device = "script"
+    device = device_from_user_agent(ua)
 
     log.info("Client connected: ip=%s device=%s origin=%s", ip, device, origin or "-")
     clients.add(ws)
