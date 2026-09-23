@@ -34,22 +34,44 @@ function shellKey(request) {
 // Chrome's error page, which carries no reload button — the app stayed dead
 // until it was force-quit. Now it opens, shows its last snapshot, says offline
 // and retries on its own.
-async function shellResponse(request, key) {
+// Storage is allowed to fail. A phone can be out of room, and a browser told
+// to clear site data makes the Cache API throw outright — neither is a reason
+// to refuse a page the relay has just handed over. The copy is an
+// optimisation, never a dependency, so both sides of it swallow their own
+// errors and leave the network's answer untouched.
+async function keepInShell(key, response) {
   try {
-    const response = await fetch(request);
-    if (response && response.ok) {
-      const cache = await caches.open(SHELL);
-      await cache.put(key, response.clone());
-    }
-    return response;
-  } catch (unreachable) {
     const cache = await caches.open(SHELL);
-    const cached = await cache.match(key);
+    await cache.put(key, response);
+  } catch (unstorable) {
+    // Nothing to do and nothing to say: the page is already on its way.
+  }
+}
+
+async function fromShell(key) {
+  try {
+    const cache = await caches.open(SHELL);
+    return await cache.match(key);
+  } catch (unreadable) {
+    return undefined;
+  }
+}
+
+async function shellResponse(request, key) {
+  let response;
+  try {
+    response = await fetch(request);
+  } catch (unreachable) {
+    const cached = await fromShell(key);
     if (cached) return cached;
-    // Nothing kept yet. Let the error through: resolving with nothing would be
-    // reported as a broken worker rather than the network failure it is.
+    // The relay cannot be reached and nothing was kept. Let the network error
+    // through: resolving with nothing would be reported as a broken worker
+    // rather than the failure it is, and a storage error raised from here
+    // would send whoever reads it hunting the wrong fault.
     throw unreachable;
   }
+  if (response && response.ok) await keepInShell(key, response.clone());
+  return response;
 }
 
 // Handling fetch is also what makes the app installable — Chrome offers a

@@ -174,6 +174,56 @@ async function main() {
     await assert.rejects(dispatch(navigation()), /Failed to fetch/);
   }
 
+  // --- Storage is allowed to fail ------------------------------------------
+
+  {
+    // A phone can be out of room, and a browser set to clear site data makes
+    // the Cache API throw outright. Neither is a reason to refuse a page the
+    // relay just handed over: the copy is an optimisation, not a dependency.
+    const refuses = {
+      async open() { throw new Error('QuotaExceededError'); },
+      async match() { throw new Error('QuotaExceededError'); },
+    };
+    const dispatch = loadWorker({ fetch: async () => fakeResponse('page v3'), caches: refuses });
+
+    const served = await dispatch(navigation());
+
+    assert.equal(served.body, 'page v3', 'a broken cache must not fail a good response');
+  }
+
+  {
+    // The likelier shape: opening works, writing does not.
+    const refuses = {
+      async open() {
+        return {
+          async put() { throw new Error('QuotaExceededError'); },
+          async match() { return undefined; },
+        };
+      },
+    };
+    const dispatch = loadWorker({ fetch: async () => fakeResponse('page v3'), caches: refuses });
+
+    const served = await dispatch(navigation());
+
+    assert.equal(served.body, 'page v3', 'a failed write must not fail the page');
+  }
+
+  {
+    // With the relay unreachable and the cache unreadable, what reaches the
+    // page must be the network failure — the true one — and not a storage
+    // error that would send anyone reading it hunting the wrong fault.
+    const refuses = {
+      async open() { throw new Error('storage blocked'); },
+      async match() { throw new Error('storage blocked'); },
+    };
+    const dispatch = loadWorker({
+      fetch: async () => { throw new TypeError('Failed to fetch'); },
+      caches: refuses,
+    });
+
+    await assert.rejects(dispatch(navigation()), /Failed to fetch/);
+  }
+
   // --- A relay that answers badly is not cached ----------------------------
 
   {

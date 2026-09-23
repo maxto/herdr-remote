@@ -232,7 +232,20 @@ class InstallabilityTest(unittest.TestCase):
         body = self.worker[self.worker.index("async function shellResponse"):]
         body = body[:body.index("\n}")]
 
-        self.assertLess(body.index("await fetch("), body.index("cache.match("))
+        self.assertLess(body.index("await fetch("), body.index("fromShell("))
+
+    def test_a_cache_that_fails_cannot_fail_the_page(self):
+        """The copy is an optimisation, never a dependency.
+
+        A phone out of room, or a browser told to clear site data, makes the
+        Cache API throw. Reading or writing the copy must swallow that rather
+        than turn a page the relay has already served into a failed load.
+        """
+        for helper in ("async function keepInShell", "async function fromShell"):
+            body = self.worker[self.worker.index(helper):]
+            body = body[:body.index("\n}")]
+
+            self.assertIn("catch", body, helper)
 
     def test_only_the_files_the_page_boots_from_are_kept(self):
         # index.html loads ./security.js, so a page cached without it opens to
