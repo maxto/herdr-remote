@@ -144,6 +144,48 @@ returns `200`. Every piece of agent data sits behind the WebSocket, which
 closes an unauthenticated client with `1008`, and rejects an unlisted browser
 origin with `403` before the upgrade completes.
 
+## When Funnel stops answering
+
+Funnel has twice gone dark while everything on this machine stayed healthy.
+The phone shows `connecting…`, then `offline`, then retries, and the relay
+logs no `Page request:` from the handset. The public Funnel ingress accepts
+the TCP connection, then stalls after the TLS ClientHello and never forwards a
+packet to the node.
+
+Tell it apart from a local fault by forcing the public ingress, from the
+machine that runs the relay:
+
+```bash
+H=<machine>.<tailnet>.ts.net
+for IP in $(dig +short @1.1.1.1 $H A); do
+  curl -s -o /dev/null -w "$IP %{http_code}\n" --max-time 8 --resolve $H:443:$IP https://$H/
+done
+```
+
+Plain `curl https://$H/` on a tailnet machine with MagicDNS goes to the
+tailnet address, not the ingress, so it answers `200` even during the outage.
+If the probe times out while `curl http://127.0.0.1:8375/` answers, the fault
+is the ingress. Re-register the Funnel:
+
+```bash
+tailscale funnel --https=443 off
+tailscale funnel --bg --https=443 http://127.0.0.1:8375
+```
+
+It can take a minute or two for every ingress address to recover. Restarting
+`tailscaled` was not needed.
+
+| Date | Duration | Resolution |
+|------|----------|------------|
+| 2026-09-20 | about 7 h (14:39–21:35) | Healed on its own; cause not found |
+| 2026-09-23/24 | about 21 h (from 22:16) | Funnel off/on; all ingresses answered within about 90 s |
+
+Both times `tailscaled` had been running since 2026-09-20 09:58, and
+status.tailscale.com reported no incident. Why the ingress loses the node is
+still unknown. If it happens again, the next step is a continuity measure
+(a watchdog that re-registers the Funnel, or a second path such as the
+Cloudflare tunnel) rather than another manual fix.
+
 ## Turning it off
 
 ```bash
